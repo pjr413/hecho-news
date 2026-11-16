@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "Photo Sorter",
+    "slug": "photo-sorter",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "app.photosorter.home"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "app.photosorter.home"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Photo Sorter shows your photos so you can sort them into albums and delete the ones you don’t want.",
+          "savePhotosPermission": "Photo Sorter adds the photos you keep to your albums.",
+          "granularPermissions": [
+            "photo"
+          ]
+        }
+      ]
+    ]
+  }
+}
