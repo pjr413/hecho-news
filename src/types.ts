@@ -6,30 +6,22 @@ export type Photo = {
 
 export type Access = 'all' | 'limited' | 'none';
 
-export type Action =
-  | { type: 'trash' }
-  | { type: 'album'; slot: number }
-  | { type: 'keep' };
+/** What can be decided about a photo. */
+export type Choice = { type: 'trash' } | { type: 'album'; slot: number };
+
+/** Everything a swipe or button can do: decide, or move along the timeline. */
+export type Action = Choice | { type: 'next' } | { type: 'prev' };
 
 /** `at` is when the choice was made; the trash bin counts its days from it. */
-export type Decision = { photo: Photo; action: Action; at: number };
+export type Decision = { photo: Photo; action: Choice; at: number };
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
 export const RETENTION_CHOICES = [3, 7, 14, 30];
 export const DEFAULT_RETENTION_DAYS = 7;
 
-export const SLOT_COUNT = 8;
-
-export const DEFAULT_SLOTS = [
-  'Family',
-  'Friends',
-  'Travel',
-  'Keepers',
-  'Kids',
-  'Pets',
-  'Food',
-  'Funny',
-];
+/** Albums are added by the user, four along the top then four along the bottom. */
+export const MAX_ALBUMS = 8;
+export const ROW_SIZE = 4;
 
 export const SLOT_COLORS = [
   '#F2A65A',

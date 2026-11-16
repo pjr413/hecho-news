@@ -2,12 +2,16 @@
 
 A small phone app for clearing out a photo library one picture at a time.
 
+- **Swipe left** – next photo in the timeline (newest first); **swipe right** – go back
 - **Flick up** – move the photo to the trash bin
-- **Drag onto a tile** – four albums along the top, four along the bottom
+- **Add album** – there are no albums at first, just an Add album button. Add up to
+  eight: four along the top, then four more along the bottom
+- **Drag onto an album** – file the photo there (tap an album to do the same;
+  hold it to rename)
 - **Double-tap** – favorite (the phone's real Favorites)
-- **Swipe sideways** – keep it and move on
-- **Tap a tile** to file the current photo there; **hold a tile** to rename its album
 - **Undo** steps back through anything not yet saved
+
+Photos you swipe past are remembered, so next time the app opens where you left off.
 
 Nothing touches the photo library straight away:
 
@@ -48,8 +52,8 @@ npx expo run:android --device
 | File | What it does |
 | --- | --- |
 | `App.tsx` | Asks for photo access, then shows the sorter |
-| `src/Sorter.tsx` | The main screen: album tiles, card stack, save flow |
-| `src/PhotoCard.tsx` | The draggable card and its gestures |
+| `src/Sorter.tsx` | The main screen: album tiles, timeline, save flow |
+| `src/PhotoCard.tsx` | A photo card and its gestures (drag, flick, swipe) |
 | `src/Sheets.tsx` | Rename and save-review sheets |
 | `src/library.ts` | Photo library calls (`library.web.ts` is the sample-photo stand-in) |
 | `src/store.ts` | Album names and unsaved choices, kept between launches |

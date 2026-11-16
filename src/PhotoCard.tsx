@@ -1,5 +1,5 @@
 import { Image } from 'expo-image';
-import { forwardRef, useEffect, useImperativeHandle } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import {
   GestureDetector,
@@ -8,6 +8,7 @@ import {
   useTapGesture,
 } from 'react-native-gesture-handler';
 import Animated, {
+  Easing,
   Extrapolation,
   interpolate,
   useAnimatedStyle,
@@ -19,12 +20,14 @@ import Animated, {
 } from 'react-native-reanimated';
 import { scheduleOnRN, scheduleOnUI } from 'react-native-worklets';
 
-import type { Action, Photo } from './types';
+import { ROW_SIZE, type Action, type Photo } from './types';
 
 /** Screen measurements the card needs to know where the album tiles are. */
 export type Geometry = {
   width: number;
   height: number;
+  /** How many albums exist; tiles that aren't there can't be dropped on. */
+  albums: number;
   /** Bottom edge of the top album row. */
   topEdge: number;
   topCenterY: number;
@@ -36,10 +39,19 @@ export type Geometry = {
 
 export type PhotoCardHandle = { send: (action: Action) => void };
 
+/**
+ * Where a photo sits on the timeline relative to the one being shown.
+ * `prev` waits off-screen to the left, `next` waits underneath.
+ */
+export type Role = 'prev' | 'current' | 'next';
+const ROLE_CODE = { prev: 0, current: 1, next: 2 } as const;
+
 type Props = {
   photo: Photo;
-  active: boolean;
+  role: Role;
   favorite: boolean;
+  canBack: boolean;
+  canForward: boolean;
   geometry: SharedValue<Geometry>;
   hoverSlot: SharedValue<number>;
   onDecide: (action: Action) => void;
@@ -48,16 +60,23 @@ type Props = {
 
 const FLICK_SPEED = 800;
 const OUT = { duration: 210 };
+/** Far enough left that a waiting card is never visible, on any phone. */
+const OFFSCREEN = 1200;
 
 export const PhotoCard = forwardRef<PhotoCardHandle, Props>(function PhotoCard(
-  { photo, active, favorite, geometry, hoverSlot, onDecide, onFavorite },
+  { photo, role, favorite, canBack, canForward, geometry, hoverSlot, onDecide, onFavorite },
   ref,
 ) {
-  const tx = useSharedValue(0);
+  const active = role === 'current';
+  const tx = useSharedValue(role === 'prev' ? -OFFSCREEN : 0);
   const ty = useSharedValue(0);
   const shrink = useSharedValue(1);
   const leaving = useSharedValue(false);
-  const front = useSharedValue(active ? 1 : 0);
+  /** 1 while waiting underneath the current photo, 0 otherwise. */
+  const depth = useSharedValue(role === 'next' ? 1 : 0);
+  const roleCode = useSharedValue<number>(ROLE_CODE[role]);
+  const canBackSV = useSharedValue(canBack);
+  const canForwardSV = useSharedValue(canForward);
   const heart = useSharedValue(0);
   // Speed from the last move event: the release event doesn't reliably carry one.
   const speedX = useSharedValue(0);
@@ -65,21 +84,50 @@ export const PhotoCard = forwardRef<PhotoCardHandle, Props>(function PhotoCard(
   const movedAt = useSharedValue(0);
 
   useEffect(() => {
-    front.value = withTiming(active ? 1 : 0, { duration: 180 });
-  }, [active, front]);
+    canBackSV.value = canBack;
+    canForwardSV.value = canForward;
+  }, [canBack, canForward, canBackSV, canForwardSV]);
+
+  // Move to the right place when the timeline moves on or back.
+  const wasRole = useRef(role);
+  useEffect(() => {
+    roleCode.value = ROLE_CODE[role];
+    const was = wasRole.current;
+    wasRole.current = role;
+    if (was === role) return;
+    if (role === 'current') {
+      // Slides in from the left when coming back to it; otherwise it was already in place.
+      leaving.value = false;
+      shrink.value = 1;
+      ty.value = withTiming(0, { duration: 180 });
+      tx.value = withTiming(0, { duration: 240, easing: Easing.out(Easing.cubic) });
+      depth.value = withTiming(0, { duration: 180 });
+    } else if (role === 'next') {
+      depth.value = withTiming(1, { duration: 180 });
+      if (!leaving.value) {
+        tx.value = 0;
+        ty.value = 0;
+        shrink.value = 1;
+      }
+    } else {
+      depth.value = 0;
+      if (!leaving.value) tx.value = -OFFSCREEN;
+    }
+  }, [role, roleCode, leaving, shrink, tx, ty, depth]);
 
   const slotAt = (x: number, y: number) => {
     'worklet';
     const g = geometry.value;
-    const column = Math.min(3, Math.max(0, Math.floor(x / (g.width / 4))));
-    if (y < g.topEdge) return column;
-    if (y > g.bottomEdge) return 4 + column;
-    return -1;
+    const column = Math.min(ROW_SIZE - 1, Math.max(0, Math.floor(x / (g.width / ROW_SIZE))));
+    const slot = y < g.topEdge ? column : y > g.bottomEdge ? ROW_SIZE + column : -1;
+    return slot < g.albums ? slot : -1;
   };
 
   const leave = (action: Action) => {
     'worklet';
     if (leaving.value) return;
+    if (action.type === 'next' && !canForwardSV.value) return;
+    if (action.type === 'prev' && !canBackSV.value) return;
     leaving.value = true;
     hoverSlot.value = -1;
     const g = geometry.value;
@@ -89,13 +137,27 @@ export const PhotoCard = forwardRef<PhotoCardHandle, Props>(function PhotoCard(
     };
     if (action.type === 'trash') {
       ty.value = withTiming(-g.height, OUT, done);
-    } else if (action.type === 'keep') {
-      const dir = tx.value < 0 ? -1 : 1;
-      tx.value = withTiming(dir * g.width * 1.3, OUT, done);
+    } else if (action.type === 'next' || action.type === 'prev') {
+      // The timeline moves at once so the other photo can arrive while this one leaves.
+      scheduleOnRN(onDecide, action);
+      const dir = action.type === 'next' ? -1 : 1;
+      tx.value = withTiming(dir * g.width * 1.3, OUT, (finished) => {
+        'worklet';
+        if (!finished) return;
+        leaving.value = false;
+        // Park it where its new role expects it.
+        if (roleCode.value === 2) {
+          tx.value = 0;
+          ty.value = 0;
+          shrink.value = 1;
+        } else if (roleCode.value === 0) {
+          tx.value = -OFFSCREEN;
+        }
+      });
     } else {
-      const column = action.slot % 4;
-      const targetY = action.slot < 4 ? g.topCenterY : g.bottomCenterY;
-      tx.value = withTiming((column + 0.5) * (g.width / 4) - g.width / 2, OUT);
+      const column = action.slot % ROW_SIZE;
+      const targetY = action.slot < ROW_SIZE ? g.topCenterY : g.bottomCenterY;
+      tx.value = withTiming((column + 0.5) * (g.width / ROW_SIZE) - g.width / 2, OUT);
       ty.value = withTiming(targetY - g.cardCenterY, OUT);
       shrink.value = withTiming(0.12, OUT, done);
     }
@@ -138,7 +200,9 @@ export const PhotoCard = forwardRef<PhotoCardHandle, Props>(function PhotoCard(
 
       if (flickedUp) leave({ type: 'trash' });
       else if (slot >= 0) leave({ type: 'album', slot });
-      else if (sideways) leave({ type: 'keep' });
+      // Swipe left for the next photo, right to go back. At either end it springs back.
+      else if (sideways && e.translationX < 0 && canForwardSV.value) leave({ type: 'next' });
+      else if (sideways && e.translationX > 0 && canBackSV.value) leave({ type: 'prev' });
       else {
         tx.value = withSpring(0);
         ty.value = withSpring(0);
@@ -165,14 +229,14 @@ export const PhotoCard = forwardRef<PhotoCardHandle, Props>(function PhotoCard(
   const cardStyle = useAnimatedStyle(() => {
     const drag = interpolate(Math.abs(ty.value), [0, 240], [1, 0.42], Extrapolation.CLAMP);
     // Go see-through over an album so the tile underneath stays readable.
-    const over = hoverSlot.value >= 0 && !leaving.value ? 0.55 : 1;
-    const rest = interpolate(front.value, [0, 1], [0.93, 1]);
+    const over = roleCode.value === 1 && hoverSlot.value >= 0 && !leaving.value ? 0.55 : 1;
+    const rest = interpolate(depth.value, [0, 1], [1, 0.93]);
     return {
-      opacity: interpolate(front.value, [0, 1], [0.45, 1]) * over,
+      opacity: interpolate(depth.value, [0, 1], [1, 0.45]) * over,
       transform: [
         { translateX: tx.value },
         { translateY: ty.value },
-        { rotate: `${tx.value / 22}deg` },
+        { rotate: `${interpolate(tx.value, [-440, 440], [-20, 20], Extrapolation.CLAMP)}deg` },
         { scale: drag * rest * shrink.value },
       ],
     };
@@ -186,7 +250,7 @@ export const PhotoCard = forwardRef<PhotoCardHandle, Props>(function PhotoCard(
   return (
     <GestureDetector gesture={gesture}>
       <Animated.View
-        style={[styles.card, cardStyle]}
+        style={[styles.card, { zIndex: active ? 3 : 1 }, cardStyle]}
         pointerEvents={active ? 'auto' : 'none'}
         testID={active ? 'photo-card' : undefined}
       >
@@ -212,7 +276,11 @@ export const PhotoCard = forwardRef<PhotoCardHandle, Props>(function PhotoCard(
 
 const styles = StyleSheet.create({
   card: {
-    position: "absolute", top: 0, right: 0, bottom: 0, left: 0,
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
     borderRadius: 22,
     overflow: 'hidden',
     backgroundColor: '#17191F',
@@ -230,7 +298,11 @@ const styles = StyleSheet.create({
   },
   badgeText: { color: '#FF5A7A', fontSize: 18 },
   heartWrap: {
-    position: "absolute", top: 0, right: 0, bottom: 0, left: 0,
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
     alignItems: 'center',
     justifyContent: 'center',
   },

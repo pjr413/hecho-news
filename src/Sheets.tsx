@@ -15,28 +15,30 @@ import type { Store } from './store';
 import { DAY_MS, RETENTION_CHOICES, SLOT_COLORS } from './types';
 
 export function RenameSheet({
-  slot,
+  visible,
+  title,
   name,
   onClose,
   onSave,
 }: {
-  slot: number | null;
+  visible: boolean;
+  title: string;
   name: string;
   onClose: () => void;
   onSave: (name: string) => void;
 }) {
   const [text, setText] = useState(name);
-  useEffect(() => setText(name), [name, slot]);
+  useEffect(() => setText(name), [name, visible]);
   const clean = text.trim();
 
   return (
-    <Modal visible={slot !== null} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={[styles.backdrop, styles.top]}>
         <View style={styles.sheet}>
-          <Text style={styles.title}>Album name</Text>
+          <Text style={styles.title}>{title}</Text>
           <Text style={styles.body}>
-            Photos dropped here go into the album with this name. It's created if it doesn't
-            exist yet.
+            Photos you drop here go into the album with this name. It's created on your phone if
+            it doesn't exist yet.
           </Text>
           <TextInput
             value={text}

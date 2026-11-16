@@ -3,9 +3,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   DEFAULT_RETENTION_DAYS,
-  DEFAULT_SLOTS,
-  SLOT_COUNT,
-  type Action,
+  MAX_ALBUMS,
+  type Choice,
   type Decision,
   type Photo,
 } from './types';
@@ -26,7 +25,7 @@ type Saved = {
 };
 
 const EMPTY: Saved = {
-  slots: DEFAULT_SLOTS,
+  slots: [],
   pending: [],
   reviewed: [],
   retentionDays: DEFAULT_RETENTION_DAYS,
@@ -46,12 +45,11 @@ export function useStore() {
           const saved = JSON.parse(raw) as Partial<Saved>;
           const now = Date.now();
           const pending = (saved.pending ?? []).map((d) => ({ ...d, at: d.at ?? now }));
-          // "Keep" needs no work on the library, so settle those from the last session.
-          const kept = pending.filter((d) => d.action.type === 'keep').map((d) => d.photo.id);
+          // Older versions saved a "keep" choice; it needs no library work, so just settle it.
+          const kept = pending.filter((d) => (d.action.type as string) === 'keep').map((d) => d.photo.id);
           setState({
-            slots:
-              saved.slots?.length === SLOT_COUNT ? saved.slots : DEFAULT_SLOTS,
-            pending: pending.filter((d) => d.action.type !== 'keep'),
+            slots: Array.isArray(saved.slots) ? saved.slots.slice(0, MAX_ALBUMS) : [],
+            pending: pending.filter((d) => (d.action.type as string) !== 'keep'),
             reviewed: [...(saved.reviewed ?? []), ...kept],
             retentionDays: saved.retentionDays ?? DEFAULT_RETENTION_DAYS,
           });
@@ -67,7 +65,7 @@ export function useStore() {
     if (ready) AsyncStorage.setItem(KEY, JSON.stringify(state)).catch(() => {});
   }, [ready, state]);
 
-  const push = useCallback((photo: Photo, action: Action) => {
+  const push = useCallback((photo: Photo, action: Choice) => {
     const d: Decision = { photo, action, at: Date.now() };
     setState((s) => ({ ...s, pending: [...s.pending, d] }));
   }, []);
@@ -91,6 +89,15 @@ export function useStore() {
     }));
   }, []);
 
+  /** Photos she has moved past, so she picks up where she left off next time. */
+  const markSeen = useCallback((photoId: string) => {
+    setState((s) => (s.reviewed.includes(photoId) ? s : { ...s, reviewed: [...s.reviewed, photoId] }));
+  }, []);
+
+  const addSlot = useCallback((name: string) => {
+    setState((s) => (s.slots.length >= MAX_ALBUMS ? s : { ...s, slots: [...s.slots, name] }));
+  }, []);
+
   const renameSlot = useCallback((slot: number, name: string) => {
     setState((s) => ({ ...s, slots: s.slots.map((n, i) => (i === slot ? name : n)) }));
   }, []);
@@ -99,7 +106,7 @@ export function useStore() {
     setState((s) => ({ ...s, retentionDays }));
   }, []);
 
-  return { ready, ...state, stateRef, push, takeBack, settle, renameSlot, setRetentionDays };
+  return { ready, ...state, stateRef, push, takeBack, settle, markSeen, addSlot, renameSlot, setRetentionDays };
 }
 
 export type Store = ReturnType<typeof useStore>;

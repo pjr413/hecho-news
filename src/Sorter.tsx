@@ -12,10 +12,18 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { scheduleOnRN } from 'react-native-worklets';
 
 import * as library from './library';
-import { PhotoCard, type Geometry, type PhotoCardHandle } from './PhotoCard';
+import { PhotoCard, type Geometry, type PhotoCardHandle, type Role } from './PhotoCard';
 import { BinSheet, RenameSheet, ReviewSheet } from './Sheets';
 import type { Store } from './store';
-import { DAY_MS, SLOT_COLORS, type Access, type Action, type Photo } from './types';
+import {
+  DAY_MS,
+  MAX_ALBUMS,
+  ROW_SIZE,
+  SLOT_COLORS,
+  type Access,
+  type Action,
+  type Photo,
+} from './types';
 
 const PAGE = 200;
 const LOW_WATER = 8;
@@ -32,13 +40,16 @@ function buzz(kind: 'tick' | 'thud') {
 
 export function Sorter({ store, access }: { store: Store; access: Access }) {
   const insets = useSafeAreaInsets();
-  const [queue, setQueue] = useState<Photo[]>([]);
+  // Every photo loaded so far in timeline order (newest first), and which one is showing.
+  const [photos, setPhotos] = useState<Photo[]>([]);
+  const [index, setIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [exhausted, setExhausted] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [favorites, setFavorites] = useState<Record<string, boolean>>({});
   const [status, setStatus] = useState('');
-  const [renaming, setRenaming] = useState<number | null>(null);
+  /** An album slot being renamed, 'new' for a new album, or null when closed. */
+  const [editing, setEditing] = useState<number | 'new' | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
@@ -46,8 +57,11 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   const [binBusy, setBinBusy] = useState(false);
   const [binError, setBinError] = useState<string | null>(null);
 
-  const queueRef = useRef(queue);
-  queueRef.current = queue;
+  const photosRef = useRef(photos);
+  photosRef.current = photos;
+  const indexRef = useRef(index);
+  indexRef.current = index;
+  const { push, takeBack, settle, markSeen, stateRef } = store;
   const offsetRef = useRef(0);
   const loadingRef = useRef(false);
   const topCard = useRef<PhotoCardHandle>(null);
@@ -58,6 +72,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   const geometry = useSharedValue<Geometry>({
     width: 1,
     height: 1,
+    albums: 0,
     topEdge: 0,
     topCenterY: 0,
     bottomEdge: 100000,
@@ -72,16 +87,27 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
     },
   );
 
+  const albumCount = store.slots.length;
+  useEffect(() => {
+    geometry.modify((g) => {
+      'worklet';
+      g.albums = albumCount;
+      // No bottom row yet means no bottom drop zone.
+      if (albumCount < ROW_SIZE) g.bottomEdge = 100000;
+      return g;
+    });
+  }, [albumCount, geometry]);
+
   const loadMore = useCallback(async () => {
     if (loadingRef.current) return;
     loadingRef.current = true;
     setLoading(true);
     setLoadError(null);
     try {
-      const { reviewed, pending } = store.stateRef.current;
+      const { reviewed, pending } = stateRef.current;
       const known = new Set<string>(reviewed);
       pending.forEach((d) => known.add(d.photo.id));
-      queueRef.current.forEach((p) => known.add(p.id));
+      photosRef.current.forEach((p) => known.add(p.id));
       const fresh: Photo[] = [];
       let done = false;
       while (fresh.length < 20 && !done) {
@@ -91,18 +117,18 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         done = page.length < PAGE;
       }
       setExhausted(done);
-      setQueue((q) => [...q, ...fresh]);
+      setPhotos((q) => [...q, ...fresh]);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : String(e));
     } finally {
       loadingRef.current = false;
       setLoading(false);
     }
-  }, [store.stateRef]);
+  }, [stateRef]);
 
   useEffect(() => {
-    if (queue.length < LOW_WATER && !exhausted && !loading && !loadError) loadMore();
-  }, [queue.length, exhausted, loading, loadError, loadMore]);
+    if (photos.length - index < LOW_WATER && !exhausted && !loading && !loadError) loadMore();
+  }, [photos.length, index, exhausted, loading, loadError, loadMore]);
 
   // First load.
   useEffect(() => {
@@ -111,40 +137,59 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
 
   const reload = useCallback(() => {
     offsetRef.current = 0;
-    setQueue([]);
-    queueRef.current = [];
+    setPhotos([]);
+    photosRef.current = [];
+    setIndex(0);
     setExhausted(false);
     setLoadError(null);
   }, []);
 
-  const current = queue[0];
+  const current = photos[index];
+  const hasPrev = index > 0;
+  const hasNext = index + 1 < photos.length;
 
   const decide = useCallback(
     (photo: Photo, action: Action) => {
-      setQueue((q) => q.filter((p) => p.id !== photo.id));
-      store.push(photo, action);
-      if (action.type === 'trash') {
-        buzz('thud');
-        setStatus('Moved to trash bin');
-      } else if (action.type === 'album') {
-        buzz('thud');
-        setStatus(`Added to ${store.stateRef.current.slots[action.slot]}`);
-      } else {
-        setStatus('Kept');
+      if (action.type === 'next') {
+        markSeen(photo.id);
+        setIndex((i) => Math.min(i + 1, photosRef.current.length));
+        return;
       }
+      if (action.type === 'prev') {
+        setIndex((i) => Math.max(0, i - 1));
+        return;
+      }
+      // Decided photos leave the timeline; the next one slides into this position.
+      setPhotos((q) => q.filter((p) => p.id !== photo.id));
+      push(photo, action);
+      buzz('thud');
+      setStatus(
+        action.type === 'trash'
+          ? 'Moved to trash bin'
+          : `Added to ${stateRef.current.slots[action.slot]}`,
+      );
     },
-    [store],
+    [push, markSeen, stateRef],
   );
 
   const putBack = useCallback(
     (photoId?: string) => {
-      const d = store.takeBack(photoId);
+      const d = takeBack(photoId);
       if (!d) return;
-      setQueue((q) => [d.photo, ...q.filter((p) => p.id !== d.photo.id)]);
+      setPhotos((q) => {
+        const rest = q.filter((p) => p.id !== d.photo.id);
+        rest.splice(Math.min(indexRef.current, rest.length), 0, d.photo);
+        return rest;
+      });
       setStatus('Put back');
     },
-    [store],
+    [takeBack],
   );
+
+  const goBack = useCallback(() => {
+    if (topCard.current) topCard.current.send({ type: 'prev' });
+    else setIndex((i) => Math.max(0, i - 1));
+  }, []);
 
   const toggleFavorite = useCallback(
     (photo: Photo) => {
@@ -163,17 +208,15 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
     setBusy(true);
     setApplyError(null);
     try {
-      const { pending, slots } = store.stateRef.current;
+      const { pending, slots } = stateRef.current;
       for (let slot = 0; slot < slots.length; slot++) {
         const ids = pending
           .filter((d) => d.action.type === 'album' && d.action.slot === slot)
           .map((d) => d.photo.id);
         if (!ids.length) continue;
         await library.fileIntoAlbum(slots[slot], ids);
-        store.settle(ids, true);
+        settle(ids, true);
       }
-      const kept = pending.filter((d) => d.action.type === 'keep').map((d) => d.photo.id);
-      if (kept.length) store.settle(kept, true);
       setReviewing(false);
       setStatus('All saved');
     } catch (e) {
@@ -182,7 +225,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
     } finally {
       setBusy(false);
     }
-  }, [store]);
+  }, [settle, stateRef]);
 
   /** Really deletes photos from the phone. The system asks her to confirm, once per batch. */
   const emptyBin = useCallback(
@@ -193,7 +236,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
       setBinError(null);
       try {
         await library.deletePhotos(ids);
-        store.settle(ids, false);
+        settle(ids, false);
         offsetRef.current = Math.max(0, offsetRef.current - ids.length);
         setStatus(`Deleted ${ids.length} ${ids.length === 1 ? 'photo' : 'photos'}`);
       } catch {
@@ -203,14 +246,14 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         setBinBusy(false);
       }
     },
-    [store],
+    [settle],
   );
 
   // Clear out photos whose time in the bin is up: on launch and whenever the app comes back.
   useEffect(() => {
     const check = () => {
       if (Date.now() - autoEmptiedAt.current < AUTO_EMPTY_COOLDOWN) return;
-      const { pending, retentionDays } = store.stateRef.current;
+      const { pending, retentionDays } = stateRef.current;
       const cutoff = Date.now() - retentionDays * DAY_MS;
       const expired = pending
         .filter((d) => d.action.type === 'trash' && d.at <= cutoff)
@@ -224,7 +267,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
       if (s === 'active') check();
     });
     return () => sub.remove();
-  }, [emptyBin, store.stateRef]);
+  }, [emptyBin, stateRef]);
 
   const counts = store.slots.map(
     (_, slot) =>
@@ -232,6 +275,27 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   );
   const trashCount = store.pending.filter((d) => d.action.type === 'trash').length;
   const toSave = counts.reduce((a, b) => a + b, 0);
+
+  const albumNames = store.slots;
+  const cell = (slot: number) => {
+    if (slot < albumNames.length) {
+      return (
+        <Tile
+          key={slot}
+          slot={slot}
+          name={albumNames[slot]}
+          count={counts[slot]}
+          hoverSlot={hoverSlot}
+          onPress={() => topCard.current?.send({ type: 'album', slot })}
+          onLongPress={() => setEditing(slot)}
+        />
+      );
+    }
+    if (slot === albumNames.length && slot < MAX_ALBUMS) {
+      return <AddTile key={slot} onPress={() => setEditing('new')} />;
+    }
+    return <View key={slot} style={styles.gap} />;
+  };
 
   const row = (from: number) => (
     <View
@@ -251,20 +315,11 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         });
       }}
     >
-      {[0, 1, 2, 3].map((i) => {
-        const slot = from + i;
-        return (
-          <Tile
-            key={slot}
-            slot={slot}
-            name={store.slots[slot]}
-            count={counts[slot]}
-            hoverSlot={hoverSlot}
-            onPress={() => topCard.current?.send({ type: 'album', slot })}
-            onLongPress={() => setRenaming(slot)}
-          />
-        );
-      })}
+      {from === 0 && albumNames.length === 0 ? (
+        <AddTile wide onPress={() => setEditing('new')} />
+      ) : (
+        [0, 1, 2, 3].map((i) => cell(from + i))
+      )}
     </View>
   );
 
@@ -335,22 +390,31 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
           });
         }}
       >
-        {queue
-          .slice(0, 2)
-          .reverse()
-          .map((photo) => (
-            <PhotoCard
-              key={photo.id}
-              ref={photo === current ? topCard : undefined}
-              photo={photo}
-              active={photo === current}
-              favorite={favorites[photo.id] ?? photo.favorite}
-              geometry={geometry}
-              hoverSlot={hoverSlot}
-              onDecide={(action) => decide(photo, action)}
-              onFavorite={() => toggleFavorite(photo)}
-            />
-          ))}
+        {(
+          [
+            { photo: photos[index - 1], role: 'prev' },
+            { photo: current, role: 'current' },
+            { photo: photos[index + 1], role: 'next' },
+          ] as { photo: Photo | undefined; role: Role }[]
+        ).flatMap(({ photo, role }) =>
+          photo
+            ? [
+                <PhotoCard
+                  key={photo.id}
+                  ref={role === 'current' ? topCard : undefined}
+                  photo={photo}
+                  role={role}
+                  favorite={favorites[photo.id] ?? photo.favorite}
+                  canBack={hasPrev}
+                  canForward={hasNext}
+                  geometry={geometry}
+                  hoverSlot={hoverSlot}
+                  onDecide={(action) => decide(photo, action)}
+                  onFavorite={() => toggleFavorite(photo)}
+                />,
+              ]
+            : [],
+        )}
 
         {!current && (
           <View style={styles.empty}>
@@ -366,11 +430,12 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
               <ActivityIndicator color="#fff" />
             ) : (
               <>
-                <Text style={styles.emptyTitle}>All caught up</Text>
+                <Text style={styles.emptyTitle}>
+                  {photos.length ? 'That\u2019s the last one' : 'No photos to sort'}
+                </Text>
                 <Text style={styles.emptyBody}>
-                  {toSave
-                    ? 'Tap Save to move your picks into albums.'
-                    : 'Every photo has been sorted.'}
+                  {toSave ? 'Tap Save to move your picks into albums. ' : ''}
+                  {hasPrev ? 'Tap Back to look through again.' : ''}
                 </Text>
                 {access === 'limited' && (
                   <Pressable
@@ -391,6 +456,16 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
 
       <View style={styles.actions}>
         <Pressable
+          style={[styles.action, !hasPrev && styles.dim]}
+          disabled={!hasPrev}
+          onPress={goBack}
+          accessibilityRole="button"
+          accessibilityLabel="Previous photo"
+          testID="back"
+        >
+          <Text style={styles.actionText}>‹ Back</Text>
+        </Pressable>
+        <Pressable
           style={[styles.action, !current && styles.dim]}
           disabled={!current}
           onPress={() => topCard.current?.send({ type: 'trash' })}
@@ -398,28 +473,33 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         >
           <Text style={styles.actionText}>Trash</Text>
         </Pressable>
-        <Text style={styles.hint}>
-          Flick up to trash{'\n'}Drag to an album · Double-tap ♥
-        </Text>
         <Pressable
-          style={[styles.action, !current && styles.dim]}
-          disabled={!current}
-          onPress={() => topCard.current?.send({ type: 'keep' })}
+          style={[styles.action, !hasNext && styles.dim]}
+          disabled={!hasNext}
+          onPress={() => topCard.current?.send({ type: 'next' })}
           accessibilityRole="button"
+          accessibilityLabel="Next photo"
+          testID="next"
         >
-          <Text style={styles.actionText}>Skip</Text>
+          <Text style={styles.actionText}>Next ›</Text>
         </Pressable>
       </View>
+      <Text style={styles.hint}>
+        Swipe left for next · right to go back · flick up to trash{'\n'}
+        {albumNames.length ? 'Drag to an album · ' : ''}Double-tap to favorite ♥
+      </Text>
 
-      {row(4)}
+      {albumNames.length >= ROW_SIZE && row(ROW_SIZE)}
 
       <RenameSheet
-        slot={renaming}
-        name={renaming === null ? '' : store.slots[renaming]}
-        onClose={() => setRenaming(null)}
+        visible={editing !== null}
+        title={editing === 'new' ? 'New album' : 'Album name'}
+        name={typeof editing === 'number' ? (albumNames[editing] ?? '') : ''}
+        onClose={() => setEditing(null)}
         onSave={(name) => {
-          if (renaming !== null) store.renameSlot(renaming, name);
-          setRenaming(null);
+          if (editing === 'new') store.addSlot(name);
+          else if (typeof editing === 'number') store.renameSlot(editing, name);
+          setEditing(null);
         }}
       />
       <ReviewSheet
@@ -498,6 +578,21 @@ function Tile({
   );
 }
 
+function AddTile({ onPress, wide }: { onPress: () => void; wide?: boolean }) {
+  return (
+    <Pressable
+      style={[styles.addTile, wide && styles.addWide]}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel="Add album"
+      testID="add-album"
+    >
+      <Text style={styles.addPlus}>＋</Text>
+      <Text style={styles.addText}>Add album</Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#0E0F13' },
   header: {
@@ -522,6 +617,21 @@ const styles = StyleSheet.create({
   saveText: { color: '#101114' },
   dim: { opacity: 0.35 },
   row: { flexDirection: 'row', paddingHorizontal: 4, zIndex: 1 },
+  gap: { flex: 1, height: 68, marginHorizontal: 4 },
+  addTile: {
+    flex: 1,
+    height: 68,
+    marginHorizontal: 4,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    borderColor: '#454B59',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addWide: { flexDirection: 'row', gap: 10 },
+  addPlus: { color: '#C5C9D2', fontSize: 20, fontWeight: '600' },
+  addText: { color: '#C5C9D2', fontSize: 13, fontWeight: '600' },
   tile: {
     flex: 1,
     height: 68,
@@ -555,7 +665,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   action: {
-    width: 72,
+    flex: 1,
     height: 38,
     borderRadius: 19,
     alignItems: 'center',
@@ -563,5 +673,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#22252E',
   },
   actionText: { color: '#F2F3F5', fontSize: 14, fontWeight: '600' },
-  hint: { flex: 1, textAlign: 'center', color: '#7C828E', fontSize: 12, lineHeight: 16 },
+  hint: {
+    textAlign: 'center',
+    color: '#7C828E',
+    fontSize: 12,
+    lineHeight: 16,
+    paddingHorizontal: 16,
+    paddingBottom: 6,
+  },
 });
