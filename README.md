@@ -2,17 +2,21 @@
 
 A small phone app for clearing out a photo library one picture at a time.
 
-- **Flick up** – throw the photo in the trash
+- **Flick up** – move the photo to the trash bin
 - **Drag onto a tile** – four albums along the top, four along the bottom
 - **Double-tap** – favorite (the phone's real Favorites)
 - **Swipe sideways** – keep it and move on
 - **Tap a tile** to file the current photo there; **hold a tile** to rename its album
 - **Undo** steps back through anything not yet saved
 
-Nothing touches the photo library until **Save**. Save shows what's about to
-happen (tap a trashed photo to rescue it), then files the keepers into albums and
-deletes the rest in one go, so the phone only asks for confirmation once. On
-iPhone, deleted photos go to Recently Deleted for 30 days.
+Nothing touches the photo library straight away:
+
+- **Save** files the keepers into their albums.
+- **Bin** is the trash bin. Photos wait there for 7 days (or 3, 14 or 30) and can
+  be put back with a tap. When their days run out they are deleted from the phone
+  the next time the app is opened; the phone asks once to confirm, as it does for
+  any app that deletes photos. "Delete all now" empties the bin early. On iPhone,
+  deleted photos then sit in Recently Deleted for another 30 days.
 
 Photos only for now; videos are left alone.
 

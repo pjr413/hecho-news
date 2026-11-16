@@ -1,6 +1,6 @@
 import * as Haptics from 'expo-haptics';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   useAnimatedReaction,
   useAnimatedStyle,
@@ -13,12 +13,14 @@ import { scheduleOnRN } from 'react-native-worklets';
 
 import * as library from './library';
 import { PhotoCard, type Geometry, type PhotoCardHandle } from './PhotoCard';
-import { RenameSheet, ReviewSheet } from './Sheets';
+import { BinSheet, RenameSheet, ReviewSheet } from './Sheets';
 import type { Store } from './store';
-import { SLOT_COLORS, type Access, type Action, type Photo } from './types';
+import { DAY_MS, SLOT_COLORS, type Access, type Action, type Photo } from './types';
 
 const PAGE = 200;
 const LOW_WATER = 8;
+/** Don't re-ask to clear expired photos more often than this (e.g. after she says no). */
+const AUTO_EMPTY_COOLDOWN = 6 * 60 * 60 * 1000;
 
 function buzz(kind: 'tick' | 'thud') {
   const run =
@@ -40,12 +42,17 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   const [reviewing, setReviewing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
+  const [binOpen, setBinOpen] = useState(false);
+  const [binBusy, setBinBusy] = useState(false);
+  const [binError, setBinError] = useState<string | null>(null);
 
   const queueRef = useRef(queue);
   queueRef.current = queue;
   const offsetRef = useRef(0);
   const loadingRef = useRef(false);
   const topCard = useRef<PhotoCardHandle>(null);
+  const emptyingRef = useRef(false);
+  const autoEmptiedAt = useRef(0);
 
   const hoverSlot = useSharedValue(-1);
   const geometry = useSharedValue<Geometry>({
@@ -115,10 +122,10 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   const decide = useCallback(
     (photo: Photo, action: Action) => {
       setQueue((q) => q.filter((p) => p.id !== photo.id));
-      store.push({ photo, action });
+      store.push(photo, action);
       if (action.type === 'trash') {
         buzz('thud');
-        setStatus('Moved to trash');
+        setStatus('Moved to trash bin');
       } else if (action.type === 'album') {
         buzz('thud');
         setStatus(`Added to ${store.stateRef.current.slots[action.slot]}`);
@@ -167,12 +174,6 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
       }
       const kept = pending.filter((d) => d.action.type === 'keep').map((d) => d.photo.id);
       if (kept.length) store.settle(kept, true);
-      const trash = pending.filter((d) => d.action.type === 'trash').map((d) => d.photo.id);
-      if (trash.length) {
-        await library.deletePhotos(trash);
-        store.settle(trash, false);
-        offsetRef.current = Math.max(0, offsetRef.current - trash.length);
-      }
       setReviewing(false);
       setStatus('All saved');
     } catch (e) {
@@ -183,12 +184,54 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
     }
   }, [store]);
 
+  /** Really deletes photos from the phone. The system asks her to confirm, once per batch. */
+  const emptyBin = useCallback(
+    async (ids: string[]) => {
+      if (!ids.length || emptyingRef.current) return;
+      emptyingRef.current = true;
+      setBinBusy(true);
+      setBinError(null);
+      try {
+        await library.deletePhotos(ids);
+        store.settle(ids, false);
+        offsetRef.current = Math.max(0, offsetRef.current - ids.length);
+        setStatus(`Deleted ${ids.length} ${ids.length === 1 ? 'photo' : 'photos'}`);
+      } catch {
+        setBinError("Those weren't deleted. They're still in the bin.");
+      } finally {
+        emptyingRef.current = false;
+        setBinBusy(false);
+      }
+    },
+    [store],
+  );
+
+  // Clear out photos whose time in the bin is up: on launch and whenever the app comes back.
+  useEffect(() => {
+    const check = () => {
+      if (Date.now() - autoEmptiedAt.current < AUTO_EMPTY_COOLDOWN) return;
+      const { pending, retentionDays } = store.stateRef.current;
+      const cutoff = Date.now() - retentionDays * DAY_MS;
+      const expired = pending
+        .filter((d) => d.action.type === 'trash' && d.at <= cutoff)
+        .map((d) => d.photo.id);
+      if (!expired.length) return;
+      autoEmptiedAt.current = Date.now();
+      emptyBin(expired);
+    };
+    check();
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') check();
+    });
+    return () => sub.remove();
+  }, [emptyBin, store.stateRef]);
+
   const counts = store.slots.map(
     (_, slot) =>
       store.pending.filter((d) => d.action.type === 'album' && d.action.slot === slot).length,
   );
   const trashCount = store.pending.filter((d) => d.action.type === 'trash').length;
-  const toSave = trashCount + counts.reduce((a, b) => a + b, 0);
+  const toSave = counts.reduce((a, b) => a + b, 0);
 
   const row = (from: number) => (
     <View
@@ -252,6 +295,18 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
           {status || (library.isDemo ? 'Preview with sample photos' : '')}
         </Text>
         <Pressable
+          style={styles.pill}
+          onPress={() => {
+            setBinError(null);
+            setBinOpen(true);
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={`Trash bin, ${trashCount} photos`}
+          testID="bin"
+        >
+          <Text style={styles.pillText}>{trashCount ? `Bin ${trashCount}` : 'Bin'}</Text>
+        </Pressable>
+        <Pressable
           style={[styles.pill, styles.save, !toSave && styles.dim]}
           disabled={!toSave}
           onPress={() => {
@@ -314,7 +369,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
                 <Text style={styles.emptyTitle}>All caught up</Text>
                 <Text style={styles.emptyBody}>
                   {toSave
-                    ? 'Tap Save to move your picks into albums and empty the trash.'
+                    ? 'Tap Save to move your picks into albums.'
                     : 'Every photo has been sorted.'}
                 </Text>
                 {access === 'limited' && (
@@ -372,9 +427,17 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         store={store}
         busy={busy}
         error={applyError}
-        onRescue={(id) => putBack(id)}
         onClose={() => setReviewing(false)}
         onApply={apply}
+      />
+      <BinSheet
+        visible={binOpen}
+        store={store}
+        busy={binBusy}
+        error={binError}
+        onRestore={(id) => putBack(id)}
+        onEmpty={emptyBin}
+        onClose={() => setBinOpen(false)}
       />
     </View>
   );
@@ -442,13 +505,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 12,
     height: 52,
-    gap: 10,
+    gap: 8,
   },
   status: { flex: 1, textAlign: 'center', color: '#A9AEB8', fontSize: 14 },
   pill: {
-    minWidth: 72,
+    minWidth: 64,
     height: 38,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
     borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',

@@ -11,7 +11,12 @@ export type Action =
   | { type: 'album'; slot: number }
   | { type: 'keep' };
 
-export type Decision = { photo: Photo; action: Action };
+/** `at` is when the choice was made; the trash bin counts its days from it. */
+export type Decision = { photo: Photo; action: Action; at: number };
+
+export const DAY_MS = 24 * 60 * 60 * 1000;
+export const RETENTION_CHOICES = [3, 7, 14, 30];
+export const DEFAULT_RETENTION_DAYS = 7;
 
 export const SLOT_COUNT = 8;
 

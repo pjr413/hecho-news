@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 
 import type { Store } from './store';
-import { SLOT_COLORS } from './types';
+import { DAY_MS, RETENTION_CHOICES, SLOT_COLORS } from './types';
 
 export function RenameSheet({
   slot,
@@ -74,7 +74,6 @@ export function ReviewSheet({
   store,
   busy,
   error,
-  onRescue,
   onClose,
   onApply,
 }: {
@@ -82,11 +81,9 @@ export function ReviewSheet({
   store: Store;
   busy: boolean;
   error: string | null;
-  onRescue: (photoId: string) => void;
   onClose: () => void;
   onApply: () => void;
 }) {
-  const trash = store.pending.filter((d) => d.action.type === 'trash');
   const albums = store.slots
     .map((name, slot) => ({
       name,
@@ -95,13 +92,13 @@ export function ReviewSheet({
         .length,
     }))
     .filter((a) => a.count > 0);
-  const nothing = !trash.length && !albums.length;
+  const nothing = !albums.length;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={[styles.backdrop, styles.bottom]}>
         <View style={[styles.sheet, styles.tall]}>
-          <Text style={styles.title}>Save changes</Text>
+          <Text style={styles.title}>Save to albums</Text>
           <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollBody}>
             {nothing && <Text style={styles.body}>Nothing left to save.</Text>}
             {albums.map((a) => (
@@ -115,27 +112,6 @@ export function ReviewSheet({
                 </Text>
               </View>
             ))}
-            {trash.length > 0 && (
-              <>
-                <Text style={styles.section}>
-                  Delete {trash.length} {trash.length === 1 ? 'photo' : 'photos'}
-                </Text>
-                <Text style={styles.body}>Tap any photo to keep it instead.</Text>
-                <View style={styles.grid}>
-                  {trash.map((d) => (
-                    <Pressable
-                      key={d.photo.id}
-                      disabled={busy}
-                      onPress={() => onRescue(d.photo.id)}
-                      accessibilityRole="button"
-                      accessibilityLabel="Keep this photo"
-                    >
-                      <Image source={{ uri: d.photo.uri }} style={styles.thumb} contentFit="cover" />
-                    </Pressable>
-                  ))}
-                </View>
-              </>
-            )}
           </ScrollView>
           {error && <Text style={styles.error}>{error}</Text>}
           <View style={styles.buttons}>
@@ -152,6 +128,101 @@ export function ReviewSheet({
                 <ActivityIndicator color="#101114" />
               ) : (
                 <Text style={[styles.buttonText, styles.primaryText]}>Save</Text>
+              )}
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+export function BinSheet({
+  visible,
+  store,
+  busy,
+  error,
+  onRestore,
+  onEmpty,
+  onClose,
+}: {
+  visible: boolean;
+  store: Store;
+  busy: boolean;
+  error: string | null;
+  onRestore: (photoId: string) => void;
+  onEmpty: (photoIds: string[]) => void;
+  onClose: () => void;
+}) {
+  const days = store.retentionDays;
+  const trash = store.pending.filter((d) => d.action.type === 'trash');
+  const now = Date.now();
+  const daysLeft = (at: number) => Math.max(0, Math.ceil((at + days * DAY_MS - now) / DAY_MS));
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={[styles.backdrop, styles.bottom]}>
+        <View style={[styles.sheet, styles.tall]}>
+          <Text style={styles.title}>Trash bin</Text>
+          <Text style={styles.body}>
+            {trash.length
+              ? 'Tap a photo to put it back. Photos are deleted from your phone when their days run out.'
+              : 'The bin is empty. Photos you flick away wait here before they are deleted.'}
+          </Text>
+          <View style={styles.chips}>
+            <Text style={styles.chipLabel}>Days to keep</Text>
+            {RETENTION_CHOICES.map((n) => (
+              <Pressable
+                key={n}
+                style={[styles.chip, n === days && styles.chipOn]}
+                onPress={() => store.setRetentionDays(n)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: n === days }}
+                accessibilityLabel={`Keep for ${n} days`}
+                testID={`keep-${n}`}
+              >
+                <Text style={[styles.chipText, n === days && styles.chipTextOn]}>{n}</Text>
+              </Pressable>
+            ))}
+          </View>
+          {trash.length > 0 && (
+            <ScrollView style={styles.scroll}>
+              <View style={styles.grid}>
+                {trash.map((d) => (
+                  <Pressable
+                    key={d.photo.id}
+                    disabled={busy}
+                    onPress={() => onRestore(d.photo.id)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Put back. ${daysLeft(d.at)} days left`}
+                    testID="bin-photo"
+                  >
+                    <Image source={{ uri: d.photo.uri }} style={styles.thumb} contentFit="cover" />
+                    <View style={styles.left}>
+                      <Text style={styles.leftText}>
+                        {daysLeft(d.at) === 0 ? 'today' : `${daysLeft(d.at)}d`}
+                      </Text>
+                    </View>
+                  </Pressable>
+                ))}
+              </View>
+            </ScrollView>
+          )}
+          {error && <Text style={styles.error}>{error}</Text>}
+          <View style={styles.buttons}>
+            <Pressable style={styles.button} onPress={onClose} disabled={busy}>
+              <Text style={styles.buttonText}>Done</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.button, styles.danger, (busy || !trash.length) && styles.dim]}
+              disabled={busy || !trash.length}
+              onPress={() => onEmpty(trash.map((d) => d.photo.id))}
+              testID="empty-bin"
+            >
+              {busy ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.buttonText}>Delete all now</Text>
               )}
             </Pressable>
           </View>
@@ -200,4 +271,30 @@ const styles = StyleSheet.create({
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   thumb: { width: 72, height: 72, borderRadius: 10, backgroundColor: '#0E0F13' },
   error: { color: '#FF8A8A', fontSize: 14, lineHeight: 20 },
+  danger: { backgroundColor: '#B3303C' },
+  chips: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 },
+  chipLabel: { color: '#A9AEB8', fontSize: 14, marginRight: 2 },
+  chip: {
+    height: 34,
+    minWidth: 46,
+    paddingHorizontal: 11,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#2A2D37',
+  },
+  chipOn: { backgroundColor: '#F2F3F5' },
+  chipText: { color: '#F2F3F5', fontSize: 14, fontWeight: '600' },
+  chipTextOn: { color: '#101114' },
+  left: {
+    position: 'absolute',
+    left: 4,
+    bottom: 4,
+    paddingHorizontal: 6,
+    height: 20,
+    borderRadius: 10,
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  leftText: { color: '#fff', fontSize: 11, fontWeight: '700' },
 });
