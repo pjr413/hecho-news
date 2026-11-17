@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 
 import type { Store } from './store';
-import { DAY_MS, RETENTION_CHOICES, SLOT_COLORS } from './types';
+import { DAY_MS, DESIGNS, RETENTION_CHOICES, SLOT_COLORS, type Design } from './types';
 
 export function RenameSheet({
   visible,
@@ -234,6 +234,72 @@ export function BinSheet({
   );
 }
 
+/** A tiny picture of where the album rows sit, so the versions can be told apart at a glance. */
+function Thumb({ design }: { design: Design }) {
+  const bar = <View style={styles.thumbBar} />;
+  return (
+    <View style={styles.thumb2}>
+      {design === 1 && bar}
+      <View style={styles.thumbCard} />
+      {design === 1 ? bar : (
+        <>
+          {bar}
+          {bar}
+        </>
+      )}
+    </View>
+  );
+}
+
+export function OptionsSheet({
+  visible,
+  design,
+  info,
+  onPick,
+  onClose,
+}: {
+  visible: boolean;
+  design: Design;
+  info: string;
+  onPick: (design: Design) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={[styles.backdrop, styles.bottom]}>
+        <View style={styles.sheet}>
+          <Text style={styles.title}>Options</Text>
+          <Text style={styles.section}>Layout</Text>
+          {DESIGNS.map((d) => (
+            <Pressable
+              key={d.id}
+              style={[styles.choice, d.id === design && styles.choiceOn]}
+              onPress={() => onPick(d.id)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: d.id === design }}
+              accessibilityLabel={`${d.name}. ${d.blurb}`}
+              testID={`design-${d.id}`}
+            >
+              <Thumb design={d.id} />
+              <View style={styles.choiceText}>
+                <Text style={styles.lineText}>{d.name}</Text>
+                <Text style={styles.body}>{d.blurb}</Text>
+              </View>
+              <Text style={styles.tick}>{d.id === design ? '✓' : ''}</Text>
+            </Pressable>
+          ))}
+          <Text style={styles.body}>{info}</Text>
+          <View style={styles.buttons}>
+            <Pressable style={[styles.button, styles.primary]} onPress={onClose} testID="options-done">
+              <Text style={[styles.buttonText, styles.primaryText]}>Done</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', padding: 16 },
   top: { justifyContent: 'flex-start', paddingTop: 110 },
@@ -274,6 +340,29 @@ const styles = StyleSheet.create({
   thumb: { width: 72, height: 72, borderRadius: 10, backgroundColor: '#0E0F13' },
   error: { color: '#FF8A8A', fontSize: 14, lineHeight: 20 },
   danger: { backgroundColor: '#B3303C' },
+  choice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 10,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    backgroundColor: '#22252E',
+  },
+  choiceOn: { borderColor: '#F2F3F5' },
+  choiceText: { flex: 1, gap: 2 },
+  tick: { color: '#F2F3F5', fontSize: 20, width: 22, textAlign: 'center' },
+  thumb2: {
+    width: 40,
+    height: 64,
+    borderRadius: 8,
+    padding: 4,
+    gap: 3,
+    backgroundColor: '#0E0F13',
+  },
+  thumbBar: { height: 7, borderRadius: 3, backgroundColor: '#F2A65A' },
+  thumbCard: { flex: 1, borderRadius: 4, backgroundColor: '#454B59' },
   chips: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 },
   chipLabel: { color: '#A9AEB8', fontSize: 14, marginRight: 2 },
   chip: {

@@ -21,6 +21,13 @@ export const DEFAULT_RETENTION_DAYS = 7;
 
 /** Albums are added by the user, four along the top then four along the bottom. */
 export const MAX_ALBUMS = 8;
+
+/** Screen layouts she can switch between in Options. */
+export type Design = 1 | 2;
+export const DESIGNS: { id: Design; name: string; blurb: string }[] = [
+  { id: 1, name: 'Version 1', blurb: 'Albums along the top, then along the bottom' },
+  { id: 2, name: 'Version 2', blurb: 'All albums in two rows across the bottom' },
+];
 export const ROW_SIZE = 4;
 
 export const SLOT_COLORS = [

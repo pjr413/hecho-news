@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   DEFAULT_RETENTION_DAYS,
   MAX_ALBUMS,
+  type Design,
   type Choice,
   type Decision,
   type Photo,
@@ -22,6 +23,8 @@ type Saved = {
   reviewed: string[];
   /** How long a photo stays in the trash bin before it's really deleted. */
   retentionDays: number;
+  /** Which screen layout she picked in Options. */
+  design: Design;
 };
 
 const EMPTY: Saved = {
@@ -29,6 +32,7 @@ const EMPTY: Saved = {
   pending: [],
   reviewed: [],
   retentionDays: DEFAULT_RETENTION_DAYS,
+  design: 1,
 };
 
 export function useStore() {
@@ -52,6 +56,7 @@ export function useStore() {
             pending: pending.filter((d) => (d.action.type as string) !== 'keep'),
             reviewed: [...(saved.reviewed ?? []), ...kept],
             retentionDays: saved.retentionDays ?? DEFAULT_RETENTION_DAYS,
+            design: saved.design === 2 ? 2 : 1,
           });
         }
       } catch {
@@ -102,11 +107,15 @@ export function useStore() {
     setState((s) => ({ ...s, slots: s.slots.map((n, i) => (i === slot ? name : n)) }));
   }, []);
 
+  const setDesign = useCallback((design: Design) => {
+    setState((s) => ({ ...s, design }));
+  }, []);
+
   const setRetentionDays = useCallback((retentionDays: number) => {
     setState((s) => ({ ...s, retentionDays }));
   }, []);
 
-  return { ready, ...state, stateRef, push, takeBack, settle, markSeen, addSlot, renameSlot, setRetentionDays };
+  return { ready, ...state, stateRef, push, takeBack, settle, markSeen, addSlot, renameSlot, setRetentionDays, setDesign };
 }
 
 export type Store = ReturnType<typeof useStore>;

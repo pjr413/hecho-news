@@ -4,6 +4,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import {
   GestureDetector,
   usePanGesture,
+  usePinchGesture,
   useSimultaneousGestures,
   useTapGesture,
 } from 'react-native-gesture-handler';
@@ -28,12 +29,14 @@ export type Geometry = {
   height: number;
   /** How many albums exist; tiles that aren't there can't be dropped on. */
   albums: number;
-  /** Bottom edge of the top album row. */
-  topEdge: number;
-  topCenterY: number;
-  /** Top edge of the bottom album row. */
-  bottomEdge: number;
-  bottomCenterY: number;
+  /** Where a finger counts as over the first row of albums (slots 0-3)... */
+  aMin: number;
+  aMax: number;
+  aCenter: number;
+  /** ...and over the second row (slots 4-7). Equal bounds mean there's no such row. */
+  bMin: number;
+  bMax: number;
+  bCenter: number;
   cardCenterY: number;
 };
 
@@ -59,6 +62,8 @@ type Props = {
 };
 
 const FLICK_SPEED = 800;
+/** Pinching a photo down to this fraction of its size (or less) sends it to the bin. */
+const PINCH_TRASH = 0.7;
 const OUT = { duration: 210 };
 /** Far enough left that a waiting card is never visible, on any phone. */
 const OFFSCREEN = 1200;
@@ -72,6 +77,7 @@ export const PhotoCard = forwardRef<PhotoCardHandle, Props>(function PhotoCard(
   const ty = useSharedValue(0);
   const shrink = useSharedValue(1);
   const leaving = useSharedValue(false);
+  const pinch = useSharedValue(1);
   /** 1 while waiting underneath the current photo, 0 otherwise. */
   const depth = useSharedValue(role === 'next' ? 1 : 0);
   const roleCode = useSharedValue<number>(ROLE_CODE[role]);
@@ -119,7 +125,12 @@ export const PhotoCard = forwardRef<PhotoCardHandle, Props>(function PhotoCard(
     'worklet';
     const g = geometry.value;
     const column = Math.min(ROW_SIZE - 1, Math.max(0, Math.floor(x / (g.width / ROW_SIZE))));
-    const slot = y < g.topEdge ? column : y > g.bottomEdge ? ROW_SIZE + column : -1;
+    const slot =
+      y >= g.aMin && y < g.aMax
+        ? column
+        : y >= g.bMin && y < g.bMax
+          ? ROW_SIZE + column
+          : -1;
     return slot < g.albums ? slot : -1;
   };
 
@@ -137,6 +148,7 @@ export const PhotoCard = forwardRef<PhotoCardHandle, Props>(function PhotoCard(
     };
     if (action.type === 'trash') {
       ty.value = withTiming(-g.height, OUT, done);
+      pinch.value = withTiming(Math.min(pinch.value, 0.5), OUT);
     } else if (action.type === 'next' || action.type === 'prev') {
       // The timeline moves at once so the other photo can arrive while this one leaves.
       scheduleOnRN(onDecide, action);
@@ -156,7 +168,7 @@ export const PhotoCard = forwardRef<PhotoCardHandle, Props>(function PhotoCard(
       });
     } else {
       const column = action.slot % ROW_SIZE;
-      const targetY = action.slot < ROW_SIZE ? g.topCenterY : g.bottomCenterY;
+      const targetY = action.slot < ROW_SIZE ? g.aCenter : g.bCenter;
       tx.value = withTiming((column + 0.5) * (g.width / ROW_SIZE) - g.width / 2, OUT);
       ty.value = withTiming(targetY - g.cardCenterY, OUT);
       shrink.value = withTiming(0.12, OUT, done);
@@ -170,6 +182,8 @@ export const PhotoCard = forwardRef<PhotoCardHandle, Props>(function PhotoCard(
   const pan = usePanGesture({
     enabled: active,
     minDistance: 6,
+    // Two fingers are a pinch, not a drag.
+    maxPointers: 1,
     onUpdate: (e) => {
       'worklet';
       if (leaving.value) return;
@@ -224,7 +238,23 @@ export const PhotoCard = forwardRef<PhotoCardHandle, Props>(function PhotoCard(
     },
   });
 
-  const gesture = useSimultaneousGestures(pan, doubleTap);
+  // Slide two fingers together to throw the photo in the bin.
+  const pinchToTrash = usePinchGesture({
+    enabled: active,
+    onUpdate: (e) => {
+      'worklet';
+      if (leaving.value) return;
+      pinch.value = Math.min(1.05, Math.max(0.25, e.scale));
+    },
+    onDeactivate: (e) => {
+      'worklet';
+      if (leaving.value) return;
+      if (!e.canceled && pinch.value <= PINCH_TRASH) leave({ type: 'trash' });
+      else pinch.value = withSpring(1);
+    },
+  });
+
+  const gesture = useSimultaneousGestures(pan, pinchToTrash, doubleTap);
 
   const cardStyle = useAnimatedStyle(() => {
     const drag = interpolate(Math.abs(ty.value), [0, 240], [1, 0.42], Extrapolation.CLAMP);
@@ -237,7 +267,7 @@ export const PhotoCard = forwardRef<PhotoCardHandle, Props>(function PhotoCard(
         { translateX: tx.value },
         { translateY: ty.value },
         { rotate: `${interpolate(tx.value, [-440, 440], [-20, 20], Extrapolation.CLAMP)}deg` },
-        { scale: drag * rest * shrink.value },
+        { scale: drag * rest * shrink.value * pinch.value },
       ],
     };
   });

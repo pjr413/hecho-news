@@ -13,7 +13,8 @@ import { scheduleOnRN } from 'react-native-worklets';
 
 import * as library from './library';
 import { PhotoCard, type Geometry, type PhotoCardHandle, type Role } from './PhotoCard';
-import { BinSheet, RenameSheet, ReviewSheet } from './Sheets';
+import { buildInfo } from './buildInfo';
+import { BinSheet, OptionsSheet, RenameSheet, ReviewSheet } from './Sheets';
 import type { Store } from './store';
 import {
   DAY_MS,
@@ -27,6 +28,8 @@ import {
 
 const PAGE = 200;
 const LOW_WATER = 8;
+/** Space between the two album rows in Version 2 (matches `rowBelow` below). */
+const ROW_GAP = 6;
 /** Don't re-ask to clear expired photos more often than this (e.g. after she says no). */
 const AUTO_EMPTY_COOLDOWN = 6 * 60 * 60 * 1000;
 
@@ -53,6 +56,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   const [reviewing, setReviewing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
+  const [optionsOpen, setOptionsOpen] = useState(false);
   const [binOpen, setBinOpen] = useState(false);
   const [binBusy, setBinBusy] = useState(false);
   const [binError, setBinError] = useState<string | null>(null);
@@ -73,10 +77,12 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
     width: 1,
     height: 1,
     albums: 0,
-    topEdge: 0,
-    topCenterY: 0,
-    bottomEdge: 100000,
-    bottomCenterY: 0,
+    aMin: 0,
+    aMax: 0,
+    aCenter: 0,
+    bMin: 100000,
+    bMax: 100000,
+    bCenter: 0,
     cardCenterY: 0,
   });
 
@@ -88,15 +94,51 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   );
 
   const albumCount = store.slots.length;
+  const design = store.design;
+  const designRef = useRef(design);
+  designRef.current = design;
+  const rowRects = useRef<{ a?: { y: number; h: number }; b?: { y: number; h: number } }>({});
+
+  /** Works out where a finger counts as "over" each album row, wherever the rows are. */
+  const applyZones = useCallback(() => {
+    const { a, b } = rowRects.current;
+    const BIG = 100000;
+    let aMin: number, aMax: number;
+    const bMin = b ? b.y : BIG;
+    const bMax = BIG;
+    if (designRef.current === 1) {
+      // Version 1: the first row is along the top, so anything above it counts.
+      aMin = -BIG;
+      aMax = a ? a.y + a.h : 0;
+    } else {
+      // Version 2: both rows are at the bottom; the first row's zone ends where the second begins.
+      aMin = a ? a.y : BIG;
+      aMax = b ? b.y : BIG;
+    }
+    const aCenter = a ? a.y + a.h / 2 : 0;
+    const bCenter = b ? b.y + b.h / 2 : 0;
+    geometry.modify((g) => {
+      'worklet';
+      g.aMin = aMin;
+      g.aMax = aMax;
+      g.aCenter = aCenter;
+      g.bMin = bMin;
+      g.bMax = bMax;
+      g.bCenter = bCenter;
+      return g;
+    });
+  }, [geometry]);
+
   useEffect(() => {
+    // The second row only exists once the first is full.
+    if (albumCount < ROW_SIZE) rowRects.current.b = undefined;
     geometry.modify((g) => {
       'worklet';
       g.albums = albumCount;
-      // No bottom row yet means no bottom drop zone.
-      if (albumCount < ROW_SIZE) g.bottomEdge = 100000;
       return g;
     });
-  }, [albumCount, geometry]);
+    applyZones();
+  }, [albumCount, design, geometry, applyZones]);
 
   const loadMore = useCallback(async () => {
     if (loadingRef.current) return;
@@ -277,6 +319,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   const toSave = counts.reduce((a, b) => a + b, 0);
 
   const albumNames = store.slots;
+  const tileH = design === 2 ? 60 : 68;
   const cell = (slot: number) => {
     if (slot < albumNames.length) {
       return (
@@ -288,35 +331,32 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
           hoverSlot={hoverSlot}
           onPress={() => topCard.current?.send({ type: 'album', slot })}
           onLongPress={() => setEditing(slot)}
+          height={tileH}
         />
       );
     }
     if (slot === albumNames.length && slot < MAX_ALBUMS) {
-      return <AddTile key={slot} onPress={() => setEditing('new')} />;
+      return <AddTile key={slot} height={tileH} onPress={() => setEditing('new')} />;
     }
-    return <View key={slot} style={styles.gap} />;
+    return <View key={slot} style={[styles.gap, { height: tileH }]} />;
   };
 
   const row = (from: number) => (
     <View
-      style={styles.row}
-      onLayout={(e) => {
-        const { y, height } = e.nativeEvent.layout;
-        geometry.modify((g) => {
-          'worklet';
-          if (from === 0) {
-            g.topEdge = y + height;
-            g.topCenterY = y + height / 2;
-          } else {
-            g.bottomEdge = y;
-            g.bottomCenterY = y + height / 2;
-          }
-          return g;
-        });
-      }}
+      style={[styles.row, design === 2 && from === ROW_SIZE && styles.rowBelow]}
+      // Version 2 measures both rows together, see `dock` below.
+      onLayout={
+        design === 1
+          ? (e) => {
+              const { y, height } = e.nativeEvent.layout;
+              rowRects.current[from === 0 ? 'a' : 'b'] = { y, h: height };
+              applyZones();
+            }
+          : undefined
+      }
     >
       {from === 0 && albumNames.length === 0 ? (
-        <AddTile wide onPress={() => setEditing('new')} />
+        <AddTile wide height={tileH} onPress={() => setEditing('new')} />
       ) : (
         [0, 1, 2, 3].map((i) => cell(from + i))
       )}
@@ -375,9 +415,18 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
             {toSave ? `Save ${toSave}` : 'Save'}
           </Text>
         </Pressable>
+        <Pressable
+          style={styles.iconButton}
+          onPress={() => setOptionsOpen(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Options"
+          testID="options"
+        >
+          <Text style={styles.iconText}>⚙</Text>
+        </Pressable>
       </View>
 
-      {row(0)}
+      {design === 1 && row(0)}
 
       <View
         style={styles.stage}
@@ -485,11 +534,29 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         </Pressable>
       </View>
       <Text style={styles.hint}>
-        Swipe left for next · right to go back · flick up to trash{'\n'}
-        {albumNames.length ? 'Drag to an album · ' : ''}Double-tap to favorite ♥
+        Swipe left for next · right to go back · flick up or pinch to trash{'\n'}
+        {albumNames.length ? (design === 2 ? 'Drag down to an album · ' : 'Drag to an album · ') : ''}
+        Double-tap to favorite ♥
       </Text>
 
-      {albumNames.length >= ROW_SIZE && row(ROW_SIZE)}
+      {design === 1 ? (
+        albumNames.length >= ROW_SIZE && row(ROW_SIZE)
+      ) : (
+        <View
+          // Both rows as one block: it changes size when the second row appears, so its
+          // position is always re-read, and each row's place follows from the block's.
+          onLayout={(e) => {
+            const { y } = e.nativeEvent.layout;
+            rowRects.current.a = { y, h: tileH };
+            rowRects.current.b =
+              albumCount >= ROW_SIZE ? { y: y + tileH + ROW_GAP, h: tileH } : undefined;
+            applyZones();
+          }}
+        >
+          {row(0)}
+          {albumNames.length >= ROW_SIZE && row(ROW_SIZE)}
+        </View>
+      )}
 
       <RenameSheet
         visible={editing !== null}
@@ -501,6 +568,13 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
           else if (typeof editing === 'number') store.renameSlot(editing, name);
           setEditing(null);
         }}
+      />
+      <OptionsSheet
+        visible={optionsOpen}
+        design={design}
+        info={buildInfo()}
+        onPick={store.setDesign}
+        onClose={() => setOptionsOpen(false)}
       />
       <ReviewSheet
         visible={reviewing}
@@ -530,6 +604,7 @@ function Tile({
   hoverSlot,
   onPress,
   onLongPress,
+  height,
 }: {
   slot: number;
   name: string;
@@ -537,6 +612,7 @@ function Tile({
   hoverSlot: SharedValue<number>;
   onPress: () => void;
   onLongPress: () => void;
+  height: number;
 }) {
   const color = SLOT_COLORS[slot];
   const style = useAnimatedStyle(() => {
@@ -550,7 +626,7 @@ function Tile({
     color: hoverSlot.value === slot ? '#101114' : '#F2F3F5',
   }));
   return (
-    <Animated.View style={[styles.tile, { borderColor: color }, style]}>
+    <Animated.View style={[styles.tile, { borderColor: color, height }, style]}>
       <Pressable
         style={styles.tilePress}
         onPress={onPress}
@@ -578,10 +654,18 @@ function Tile({
   );
 }
 
-function AddTile({ onPress, wide }: { onPress: () => void; wide?: boolean }) {
+function AddTile({
+  onPress,
+  wide,
+  height,
+}: {
+  onPress: () => void;
+  wide?: boolean;
+  height: number;
+}) {
   return (
     <Pressable
-      style={[styles.addTile, wide && styles.addWide]}
+      style={[styles.addTile, { height }, wide && styles.addWide]}
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel="Add album"
@@ -617,6 +701,16 @@ const styles = StyleSheet.create({
   saveText: { color: '#101114' },
   dim: { opacity: 0.35 },
   row: { flexDirection: 'row', paddingHorizontal: 4, zIndex: 1 },
+  rowBelow: { marginTop: ROW_GAP },
+  iconButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#22252E',
+  },
+  iconText: { color: '#F2F3F5', fontSize: 18 },
   gap: { flex: 1, height: 68, marginHorizontal: 4 },
   addTile: {
     flex: 1,
