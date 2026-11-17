@@ -39,10 +39,17 @@
       "policy": "appVersion"
     },
     "updates": {
+      "url": "https://u.expo.dev/44bdeb09-87db-4db5-a930-822c691637b4",
       "checkAutomatically": "ON_LOAD",
       "fallbackToCacheTimeout": 3000,
       "requestHeaders": {
         "expo-channel-name": "production"
+      }
+    },
+    "owner": "pjr413",
+    "extra": {
+      "eas": {
+        "projectId": "44bdeb09-87db-4db5-a930-822c691637b4"
       }
     }
   }
