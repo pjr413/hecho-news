@@ -16,9 +16,11 @@ import type { Store } from "./store";
 import {
   ALBUM_TYPES,
   DAY_MS,
+  MAX_ROWS,
   DESIGNS,
   RETENTION_CHOICES,
   SLOT_COLORS,
+  slotColor,
   type AlbumRef,
   type Design,
   type DeviceAlbum,
@@ -130,7 +132,7 @@ export function ReviewSheet({
             {albums.map((a) => (
               <View key={a.slot} style={styles.line}>
                 <View
-                  style={[styles.dot, { backgroundColor: SLOT_COLORS[a.slot] }]}
+                  style={[styles.dot, { backgroundColor: slotColor(a.slot) }]}
                 />
                 <Text style={styles.lineText} numberOfLines={1}>
                   {a.name}
@@ -407,25 +409,28 @@ export function SlotMenu({
   onClose: () => void;
 }) {
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
-    >
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={[styles.backdrop, styles.bottom]}>
         <View style={styles.sheet}>
           <Text style={styles.title} numberOfLines={1}>
             {name}
           </Text>
-          {locked && (
-            <Text style={styles.body}>
-              Photos are waiting to be saved to this album. Tap Save first, then
-              you can change this spot.
-            </Text>
-          )}
+          <Text style={styles.body}>
+            {locked
+              ? 'Photos are waiting to be saved to this album. Tap Save first, then you can remove or change it.'
+              : 'Removing it only takes it out of Photo Sorter. The album and its photos stay on your phone, and nothing is deleted.'}
+          </Text>
           <Pressable
-            style={[styles.button, locked && styles.dim]}
+            style={[styles.menuButton, styles.danger, locked && styles.dim]}
+            disabled={locked}
+            onPress={onRemove}
+            accessibilityRole="button"
+            testID="remove-album"
+          >
+            <Text style={styles.buttonText}>Remove from Photo Sorter</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.menuButton, locked && styles.dim]}
             disabled={locked}
             onPress={onChange}
             accessibilityRole="button"
@@ -433,16 +438,7 @@ export function SlotMenu({
           >
             <Text style={styles.buttonText}>Change album</Text>
           </Pressable>
-          <Pressable
-            style={[styles.button, locked && styles.dim]}
-            disabled={locked}
-            onPress={onRemove}
-            accessibilityRole="button"
-            testID="remove-album"
-          >
-            <Text style={styles.buttonText}>Empty this spot</Text>
-          </Pressable>
-          <Pressable style={[styles.button, styles.primary]} onPress={onClose}>
+          <Pressable style={[styles.menuButton, styles.primary]} onPress={onClose}>
             <Text style={[styles.buttonText, styles.primaryText]}>Close</Text>
           </Pressable>
         </View>
@@ -478,6 +474,9 @@ export function OptionsSheet({
   onAutoFill,
   chosen,
   onToggleType,
+  rows,
+  minRows,
+  onRows,
   onOpenTimer,
   onClose,
 }: {
@@ -489,6 +488,10 @@ export function OptionsSheet({
   /** Lower-case names of the albums already in a spot. */
   chosen: string[];
   onToggleType: (name: string) => Promise<string>;
+  /** How many rows of album spots are showing, and the fewest that can hold her albums. */
+  rows: number;
+  minRows: number;
+  onRows: (rows: number) => void;
   onOpenTimer: () => void;
   onClose: () => void;
 }) {
@@ -530,6 +533,30 @@ export function OptionsSheet({
                 <Text style={styles.tick}>{d.id === design ? "✓" : ""}</Text>
               </Pressable>
             ))}
+            <Text style={styles.section}>Rows of albums</Text>
+            <View style={styles.chips}>
+              {Array.from({ length: MAX_ROWS }, (_, i) => i + 1).map((n) => {
+                const tooFew = n < minRows;
+                return (
+                  <Pressable
+                    key={n}
+                    disabled={tooFew}
+                    style={[styles.chip, n === rows && styles.chipOn, tooFew && styles.dim]}
+                    onPress={() => onRows(n)}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: n === rows }}
+                    accessibilityLabel={`${n} ${n === 1 ? 'row' : 'rows'} of albums`}
+                    testID={`rows-${n}`}
+                  >
+                    <Text style={[styles.chipText, n === rows && styles.chipTextOn]}>{n}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Text style={styles.body}>
+              Each row has four spots.
+              {minRows > 1 ? ` Remove the albums in the lower rows to go below ${minRows}.` : ''}
+            </Text>
             <Text style={styles.section}>Choose album types to create</Text>
             <Text style={styles.body}>
               Tap one to put it in the next empty spot, and tap it again to take it out. New
@@ -670,6 +697,13 @@ const styles = StyleSheet.create({
   },
   error: { color: "#FF8A8A", fontSize: 14, lineHeight: 20 },
   danger: { backgroundColor: "#B3303C" },
+  menuButton: {
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#2A2D37',
+  },
   choice: {
     flexDirection: "row",
     alignItems: "center",

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   DEFAULT_RETENTION_DAYS,
   MAX_ALBUMS,
+  MAX_ROWS,
+  rowsNeeded,
   type Design,
   type AlbumRef,
   type Choice,
@@ -33,6 +35,8 @@ type Saved = {
   /** Which screen layout she picked in Options. */
   design: Design;
   slotsVersion: number;
+  /** How many rows of album spots are showing (1 to MAX_ROWS). */
+  albumRows: number;
 };
 
 /** Older versions saved plain names in order; spots are now fixed places that can be empty. */
@@ -56,6 +60,7 @@ const EMPTY: Saved = {
   retentionDays: DEFAULT_RETENTION_DAYS,
   design: 1,
   slotsVersion: SLOTS_VERSION,
+  albumRows: 1,
 };
 
 export function useStore() {
@@ -88,6 +93,11 @@ export function useStore() {
           setState({
             slots,
             slotsVersion: SLOTS_VERSION,
+            // Never fewer rows than it takes to show the albums she already has.
+            albumRows: Math.min(
+              MAX_ROWS,
+              Math.max(rowsNeeded(slots), Math.floor(Number(saved.albumRows)) || 1),
+            ),
             pending: waiting,
             reviewed: [...(saved.reviewed ?? []), ...kept],
             retentionDays: saved.retentionDays ?? DEFAULT_RETENTION_DAYS,
@@ -147,6 +157,13 @@ export function useStore() {
     }));
   }, []);
 
+  const setAlbumRows = useCallback((rows: number) => {
+    setState((s) => ({
+      ...s,
+      albumRows: Math.min(MAX_ROWS, Math.max(rowsNeeded(s.slots), Math.round(rows))),
+    }));
+  }, []);
+
   const setDesign = useCallback((design: Design) => {
     setState((s) => ({ ...s, design }));
   }, []);
@@ -155,7 +172,7 @@ export function useStore() {
     setState((s) => ({ ...s, retentionDays }));
   }, []);
 
-  return { ready, ...state, stateRef, push, takeBack, settle, markSeen, setSlot, setSlotId, setRetentionDays, setDesign };
+  return { ready, ...state, stateRef, push, takeBack, settle, markSeen, setSlot, setSlotId, setRetentionDays, setDesign, setAlbumRows };
 }
 
 export type Store = ReturnType<typeof useStore>;

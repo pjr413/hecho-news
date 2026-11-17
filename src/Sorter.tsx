@@ -2,6 +2,7 @@ import * as Haptics from 'expo-haptics';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
+  Easing,
   useAnimatedReaction,
   useAnimatedStyle,
   useSharedValue,
@@ -19,9 +20,10 @@ import { AlbumPicker, BinSheet, OptionsSheet, RenameSheet, ReviewSheet, SlotMenu
 import type { Store } from './store';
 import {
   DAY_MS,
-  MAX_ALBUMS,
+  MAX_ROWS,
   ROW_SIZE,
-  SLOT_COLORS,
+  rowsNeeded,
+  slotColor,
   type Access,
   type Action,
   type AlbumRef,
@@ -33,6 +35,10 @@ const PAGE = 200;
 const LOW_WATER = 8;
 /** Space between the two album rows in Version 2 (matches `rowBelow` below). */
 const ROW_GAP = 6;
+/** How long an album is held before its remove menu opens. */
+const HOLD_MS = 3000;
+/** A press shorter than this is a tap (files the photo); anything longer is a hold. */
+const TAP_MS = 600;
 /** Don't re-ask to clear expired photos more often than this (e.g. after she says no). */
 const AUTO_EMPTY_COOLDOWN = 6 * 60 * 60 * 1000;
 
@@ -85,12 +91,9 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
     width: 1,
     height: 1,
     filled: 0,
-    aMin: 0,
-    aMax: 0,
-    aCenter: 0,
-    bMin: 100000,
-    bMax: 100000,
-    bCenter: 0,
+    rowMin: Array.from({ length: MAX_ROWS }, () => 100000),
+    rowMax: Array.from({ length: MAX_ROWS }, () => 100000),
+    rowCenter: Array.from({ length: MAX_ROWS }, () => 0),
     cardCenterY: 0,
   });
 
@@ -103,52 +106,65 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
 
   const slots = store.slots;
   const filledMask = slots.reduce((m, a, i) => (a ? m | (1 << i) : m), 0);
-  // The second row only appears once every spot in the first row has an album.
-  const rowBVisible = slots.slice(0, ROW_SIZE).every(Boolean);
+  const rows = store.albumRows;
   const design = store.design;
-  const designRef = useRef(design);
-  designRef.current = design;
-  const rowRects = useRef<{ a?: { y: number; h: number }; b?: { y: number; h: number } }>({});
+  // Version 1 puts the first rows along the top and the rest along the bottom, Version 2 puts
+  // them all along the bottom.
+  const topRows = design === 1 ? Math.ceil(rows / 2) : 0;
+  const bottomRows = rows - topRows;
+  const tileH = design === 2 ? 60 : 68;
+  const layoutRef = useRef({ rows, topRows, tileH });
+  layoutRef.current = { rows, topRows, tileH };
+  /** Where the block of rows along the top, and the block along the bottom, start. */
+  const dockY = useRef<{ top?: number; bottom?: number }>({});
 
   /** Works out where a finger counts as "over" each album row, wherever the rows are. */
   const applyZones = useCallback(() => {
-    const { a, b } = rowRects.current;
+    const { rows: n, topRows: t, tileH: h } = layoutRef.current;
     const BIG = 100000;
-    let aMin: number, aMax: number;
-    const bMin = b ? b.y : BIG;
-    const bMax = BIG;
-    if (designRef.current === 1) {
-      // Version 1: the first row is along the top, so anything above it counts.
-      aMin = -BIG;
-      aMax = a ? a.y + a.h : 0;
-    } else {
-      // Version 2: both rows are at the bottom; the first row's zone ends where the second begins.
-      aMin = a ? a.y : BIG;
-      aMax = b ? b.y : BIG;
+    const ys: number[] = []; // top edge of each row
+    for (let r = 0; r < n; r++) {
+      const base = r < t ? dockY.current.top : dockY.current.bottom;
+      ys.push(base === undefined ? NaN : base + (r < t ? r : r - t) * (h + ROW_GAP));
     }
-    const aCenter = a ? a.y + a.h / 2 : 0;
-    const bCenter = b ? b.y + b.h / 2 : 0;
+    const rowMin: number[] = [];
+    const rowMax: number[] = [];
+    const rowCenter: number[] = [];
+    for (let r = 0; r < MAX_ROWS; r++) {
+      if (r >= n || Number.isNaN(ys[r])) {
+        rowMin.push(BIG);
+        rowMax.push(BIG);
+        rowCenter.push(0);
+        continue;
+      }
+      rowCenter.push(ys[r] + h / 2);
+      if (r < t) {
+        // Along the top: everything from the row above (or the screen's edge) down to this row.
+        rowMin.push(r === 0 ? -BIG : ys[r - 1] + h);
+        rowMax.push(ys[r] + h);
+      } else {
+        // Along the bottom: from this row's top down to the next row's top.
+        rowMin.push(ys[r]);
+        rowMax.push(r + 1 < n && !Number.isNaN(ys[r + 1]) ? ys[r + 1] : BIG);
+      }
+    }
     geometry.modify((g) => {
       'worklet';
-      g.aMin = aMin;
-      g.aMax = aMax;
-      g.aCenter = aCenter;
-      g.bMin = bMin;
-      g.bMax = bMax;
-      g.bCenter = bCenter;
+      g.rowMin = rowMin;
+      g.rowMax = rowMax;
+      g.rowCenter = rowCenter;
       return g;
     });
   }, [geometry]);
 
   useEffect(() => {
-    if (!rowBVisible) rowRects.current.b = undefined;
     geometry.modify((g) => {
       'worklet';
       g.filled = filledMask;
       return g;
     });
     applyZones();
-  }, [filledMask, rowBVisible, design, geometry, applyZones]);
+  }, [filledMask, rows, design, geometry, applyZones]);
 
   const loadMore = useCallback(async () => {
     if (loadingRef.current) return;
@@ -330,7 +346,6 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   const trashCount = store.pending.filter((d) => d.action.type === 'trash').length;
   const toSave = counts.reduce((a, b) => a + b, 0);
 
-  const tileH = design === 2 ? 60 : 68;
   const cell = (slot: number) => {
     const album = slots[slot];
     if (!album) {
@@ -344,7 +359,10 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         count={counts[slot]}
         hoverSlot={hoverSlot}
         onPress={() => topCard.current?.send({ type: 'album', slot })}
-        onLongPress={() => setMenuSlot(slot)}
+        onLongPress={() => {
+          buzz('thud');
+          setMenuSlot(slot);
+        }}
         height={tileH}
       />
     );
@@ -363,9 +381,10 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         setSlot(at, null);
         return `Took ${name} out.`;
       }
-      if (stateRef.current.slots.every(Boolean)) {
-        return 'All eight spots are full. Take one out first.';
-      }
+      const emptyShowing = () =>
+        stateRef.current.slots.slice(0, layoutRef.current.rows * ROW_SIZE).findIndex((a) => !a);
+      const full = 'All the spots are full. Add a row in Options, or take an album out.';
+      if (emptyShowing() < 0) return full;
       // If the phone already has an album with this name, use it instead of making a second one.
       let existing: DeviceAlbum | undefined;
       try {
@@ -377,8 +396,8 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
       }
       // The spots may have changed while looking.
       if (stateRef.current.slots.some(same)) return `${name} is already in a spot.`;
-      const spot = stateRef.current.slots.findIndex((a) => !a);
-      if (spot < 0) return 'All eight spots are full. Take one out first.';
+      const spot = emptyShowing();
+      if (spot < 0) return full;
       setSlot(spot, existing ? { name: existing.title, id: existing.id } : { name });
       return existing
         ? `Added ${name}. It uses the album you already have.`
@@ -396,7 +415,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
       return "Couldn't read the albums on this phone.";
     }
     const now = stateRef.current.slots;
-    const showing = now.slice(0, ROW_SIZE).every(Boolean) ? MAX_ALBUMS : ROW_SIZE;
+    const showing = layoutRef.current.rows * ROW_SIZE;
     const empty: number[] = [];
     for (let i = 0; i < showing; i++) if (!now[i]) empty.push(i);
     if (!empty.length) return 'There are no empty spots to fill.';
@@ -416,23 +435,13 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
     return `Filled ${n} ${n === 1 ? 'spot' : 'spots'}.`;
   }, [setSlot, stateRef]);
 
-  const row = (from: number) => (
-    <View
-      style={[styles.row, design === 2 && from === ROW_SIZE && styles.rowBelow]}
-      // Version 2 measures both rows together, see `dock` below.
-      onLayout={
-        design === 1
-          ? (e) => {
-              const { y, height } = e.nativeEvent.layout;
-              rowRects.current[from === 0 ? 'a' : 'b'] = { y, h: height };
-              applyZones();
-            }
-          : undefined
-      }
-    >
-      {[0, 1, 2, 3].map((i) => cell(from + i))}
+  const row = (r: number, first: boolean) => (
+    <View key={r} style={[styles.row, !first && styles.rowBelow]}>
+      {[0, 1, 2, 3].map((i) => cell(r * ROW_SIZE + i))}
     </View>
   );
+  const rowList = (from: number, count: number) =>
+    Array.from({ length: count }, (_, k) => row(from + k, k === 0));
 
   // The chess timer takes over the whole screen; this screen keeps its place underneath.
   if (timerOpen) return <ChessTimer onExit={() => setTimerOpen(false)} />;
@@ -500,7 +509,16 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         </Pressable>
       </View>
 
-      {design === 1 && row(0)}
+      {topRows > 0 && (
+        <View
+          onLayout={(e) => {
+            dockY.current.top = e.nativeEvent.layout.y;
+            applyZones();
+          }}
+        >
+          {rowList(0, topRows)}
+        </View>
+      )}
 
       <View
         style={styles.stage}
@@ -617,22 +635,16 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         Double-tap to favorite ♥ · OTA test
       </Text>
 
-      {design === 1 ? (
-        rowBVisible && row(ROW_SIZE)
-      ) : (
+      {bottomRows > 0 && (
         <View
-          // Both rows as one block: it changes size when the second row appears, so its
-          // position is always re-read, and each row's place follows from the block's.
+          // One block for all the bottom rows: it changes size when rows are added, so its
+          // position is always re-read.
           onLayout={(e) => {
-            const { y } = e.nativeEvent.layout;
-            rowRects.current.a = { y, h: tileH };
-            rowRects.current.b =
-              rowBVisible ? { y: y + tileH + ROW_GAP, h: tileH } : undefined;
+            dockY.current.bottom = e.nativeEvent.layout.y;
             applyZones();
           }}
         >
-          {row(0)}
-          {rowBVisible && row(ROW_SIZE)}
+          {rowList(topRows, bottomRows)}
         </View>
       )}
 
@@ -681,6 +693,9 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         onAutoFill={autoFill}
         chosen={slots.flatMap((a) => (a ? [a.name.toLowerCase()] : []))}
         onToggleType={toggleType}
+        rows={rows}
+        minRows={rowsNeeded(slots)}
+        onRows={store.setAlbumRows}
         onOpenTimer={() => {
           setOptionsOpen(false);
           setTimerOpen(true);
@@ -725,7 +740,10 @@ function Tile({
   onLongPress: () => void;
   height: number;
 }) {
-  const color = SLOT_COLORS[slot];
+  const color = slotColor(slot);
+  const hold = useSharedValue(0);
+  const pressedAt = useRef(0);
+  const fill = useAnimatedStyle(() => ({ width: `${hold.value * 100}%` }));
   const style = useAnimatedStyle(() => {
     const on = hoverSlot.value === slot;
     return {
@@ -738,13 +756,28 @@ function Tile({
   }));
   return (
     <Animated.View style={[styles.tile, { borderColor: color, height }, style]}>
+      {/* Fills across while the album is held, so the long wait is visible. */}
+      <View style={styles.holdWrap} pointerEvents="none">
+        <Animated.View style={[styles.holdFill, fill]} />
+      </View>
       <Pressable
         style={styles.tilePress}
-        onPress={onPress}
+        // Only a quick tap files the photo, so letting go part-way through a hold does nothing.
+        onPress={() => {
+          if (Date.now() - pressedAt.current <= TAP_MS) onPress();
+        }}
+        onPressIn={() => {
+          pressedAt.current = Date.now();
+          hold.value = withTiming(1, { duration: HOLD_MS, easing: Easing.linear });
+        }}
+        onPressOut={() => {
+          hold.value = withTiming(0, { duration: 150 });
+        }}
+        delayLongPress={HOLD_MS}
         onLongPress={onLongPress}
         accessibilityRole="button"
         accessibilityLabel={`${name} album`}
-        accessibilityHint="Adds this photo. Hold to change or remove."
+        accessibilityHint="Adds this photo. Hold for three seconds to remove it from the app."
         testID={`tile-${slot}`}
       >
         <Animated.Text
@@ -841,6 +874,16 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 2,
   },
+  holdWrap: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  holdFill: { height: '100%', backgroundColor: 'rgba(229,57,53,0.45)' },
   tilePress: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
   tileName: { fontSize: 14, fontWeight: '700', textAlign: 'center' },
   count: {

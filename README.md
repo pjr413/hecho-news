@@ -4,16 +4,17 @@ A small phone app for clearing out a photo library one picture at a time.
 
 - **Swipe left** – next photo in the timeline (newest first); **swipe right** – go back
 - **Flick up**, or **pinch two fingers together** – move the photo to the trash bin
-- **Album spots** – along the top there are four empty dotted spots. Tap a **+** to pick
-  one of the albums already on the phone (biggest first), or make a new one. Fill all four
-  and a second row of four appears, up to eight in all
+- **Album spots** – empty dotted spots, four to a row, one row to begin with. Tap a **+**
+  to pick one of the albums already on the phone (biggest first), or make a new one. In
+  Options you choose how many rows you want, from one to four
 - **Drag onto an album** – file the photo there (tap an album to do the same). Hold an
-  album to change it or empty the spot (not while photos are waiting to be saved to it)
+  album for three seconds (a red fill shows the time) to remove it from Photo Sorter or change
+  it. Removing only takes it out of the app; the album and its photos stay on the phone
 - **Options** (the gear at the top) – **Choose album types to create** (Family, Friends,
   Travel, Keepers, Kids, Pets, Food, Funny: tap one to put it in the next empty spot, tap
   again to take it out), **Fill empty spots with my albums** (uses the albums with the
   most photos first), and switch between Version 1 (albums along the top and
-  bottom) and Version 2 (all albums in two rows across the bottom); also shows which
+  bottom) and Version 2 (all the album rows across the bottom); also shows which
   build of the app is running
 - **Chess timer** (a button in Options) – a two-player clock. Set either a total time per
   player (with ready-made game types such as Blitz 3+2 or Rapid 15+10, and extra time: increment,

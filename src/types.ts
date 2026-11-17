@@ -26,15 +26,17 @@ export const RETENTION_CHOICES = [3, 7, 14, 30];
 export const DEFAULT_RETENTION_DAYS = 7;
 
 /** Albums are added by the user, four along the top then four along the bottom. */
-export const MAX_ALBUMS = 8;
+/** Rows of album spots she can show (chosen in Options), four spots in each. */
+export const MAX_ROWS = 4;
 
 /** Screen layouts she can switch between in Options. */
 export type Design = 1 | 2;
 export const DESIGNS: { id: Design; name: string; blurb: string }[] = [
-  { id: 1, name: 'Version 1', blurb: 'Albums along the top, then along the bottom' },
-  { id: 2, name: 'Version 2', blurb: 'All albums in two rows across the bottom' },
+  { id: 1, name: 'Version 1', blurb: 'Album rows along the top and the bottom' },
+  { id: 2, name: 'Version 2', blurb: 'All the album rows across the bottom' },
 ];
 export const ROW_SIZE = 4;
+export const MAX_ALBUMS = ROW_SIZE * MAX_ROWS;
 
 /** The ready-made album types offered in Options (the colors follow SLOT_COLORS in order). */
 export const ALBUM_TYPES = ['Family', 'Friends', 'Travel', 'Keepers', 'Kids', 'Pets', 'Food', 'Funny'];
@@ -49,3 +51,15 @@ export const SLOT_COLORS = [
   '#6FA8FF',
   '#FF8C61',
 ];
+
+/** Album spots repeat their colors after the first eight. */
+export const slotColor = (slot: number): string => SLOT_COLORS[slot % SLOT_COLORS.length];
+
+/** How many rows are needed to show every album that's been placed (at least one). */
+export function rowsNeeded(slots: (AlbumRef | null)[]): number {
+  let rows = 1;
+  slots.forEach((a, i) => {
+    if (a) rows = Math.max(rows, Math.floor(i / ROW_SIZE) + 1);
+  });
+  return rows;
+}

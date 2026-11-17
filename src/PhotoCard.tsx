@@ -29,14 +29,13 @@ export type Geometry = {
   height: number;
   /** Bit i is set when spot i has an album; empty spots can't be dropped on. */
   filled: number;
-  /** Where a finger counts as over the first row of albums (slots 0-3)... */
-  aMin: number;
-  aMax: number;
-  aCenter: number;
-  /** ...and over the second row (slots 4-7). Equal bounds mean there's no such row. */
-  bMin: number;
-  bMax: number;
-  bCenter: number;
+  /**
+   * For each album row (top to bottom as numbered): where a finger counts as over it
+   * (min <= y < max) and where its middle is. Equal bounds mean there is no such row.
+   */
+  rowMin: number[];
+  rowMax: number[];
+  rowCenter: number[];
   cardCenterY: number;
 };
 
@@ -125,12 +124,13 @@ export const PhotoCard = forwardRef<PhotoCardHandle, Props>(function PhotoCard(
     'worklet';
     const g = geometry.value;
     const column = Math.min(ROW_SIZE - 1, Math.max(0, Math.floor(x / (g.width / ROW_SIZE))));
-    const slot =
-      y >= g.aMin && y < g.aMax
-        ? column
-        : y >= g.bMin && y < g.bMax
-          ? ROW_SIZE + column
-          : -1;
+    let slot = -1;
+    for (let r = 0; r < g.rowMin.length; r++) {
+      if (y >= g.rowMin[r] && y < g.rowMax[r]) {
+        slot = r * ROW_SIZE + column;
+        break;
+      }
+    }
     return slot >= 0 && (g.filled & (1 << slot)) !== 0 ? slot : -1;
   };
 
@@ -168,7 +168,7 @@ export const PhotoCard = forwardRef<PhotoCardHandle, Props>(function PhotoCard(
       });
     } else {
       const column = action.slot % ROW_SIZE;
-      const targetY = action.slot < ROW_SIZE ? g.aCenter : g.bCenter;
+      const targetY = g.rowCenter[Math.floor(action.slot / ROW_SIZE)];
       tx.value = withTiming((column + 0.5) * (g.width / ROW_SIZE) - g.width / 2, OUT);
       ty.value = withTiming(targetY - g.cardCenterY, OUT);
       shrink.value = withTiming(0.12, OUT, done);
