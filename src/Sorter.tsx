@@ -614,7 +614,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
             ? 'Drag down to an album · '
             : 'Drag to an album · '
           : 'Tap a + to choose an album · '}
-        Double-tap to favorite ♥
+        Double-tap to favorite ♥ · OTA test
       </Text>
 
       {design === 1 ? (
