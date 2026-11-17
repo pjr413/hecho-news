@@ -12,6 +12,11 @@ import {
 } from './types';
 
 const KEY = 'photo-sorter/v1';
+/**
+ * Bumped when the album spots were reset to start empty. Data saved before that still holds the
+ * old ready-made albums, which are cleared once (see the load below).
+ */
+const SLOTS_VERSION = 2;
 
 type Saved = {
   /** Always MAX_ALBUMS long; null is an empty spot. */
@@ -27,6 +32,7 @@ type Saved = {
   retentionDays: number;
   /** Which screen layout she picked in Options. */
   design: Design;
+  slotsVersion: number;
 };
 
 /** Older versions saved plain names in order; spots are now fixed places that can be empty. */
@@ -49,6 +55,7 @@ const EMPTY: Saved = {
   reviewed: [],
   retentionDays: DEFAULT_RETENTION_DAYS,
   design: 1,
+  slotsVersion: SLOTS_VERSION,
 };
 
 export function useStore() {
@@ -67,9 +74,21 @@ export function useStore() {
           const pending = (saved.pending ?? []).map((d) => ({ ...d, at: d.at ?? now }));
           // Older versions saved a "keep" choice; it needs no library work, so just settle it.
           const kept = pending.filter((d) => (d.action.type as string) === 'keep').map((d) => d.photo.id);
+          const waiting = pending.filter((d) => (d.action.type as string) !== 'keep');
+          let slots = normalizeSlots(saved.slots);
+          if (saved.slotsVersion !== SLOTS_VERSION) {
+            // Start with empty spots. Only keep one if photos are still waiting to be filed
+            // into it, so nothing already chosen gets stranded.
+            const inUse = new Set<number>();
+            waiting.forEach((d) => {
+              if (d.action.type === 'album') inUse.add(d.action.slot);
+            });
+            slots = slots.map((a, i) => (inUse.has(i) ? a : null));
+          }
           setState({
-            slots: normalizeSlots(saved.slots),
-            pending: pending.filter((d) => (d.action.type as string) !== 'keep'),
+            slots,
+            slotsVersion: SLOTS_VERSION,
+            pending: waiting,
             reviewed: [...(saved.reviewed ?? []), ...kept],
             retentionDays: saved.retentionDays ?? DEFAULT_RETENTION_DAYS,
             design: saved.design === 2 ? 2 : 1,
