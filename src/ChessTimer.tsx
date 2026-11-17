@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { allowSleep, keepAwake } from './keepAwake';
@@ -9,13 +9,53 @@ import { allowSleep, keepAwake } from './keepAwake';
 type Mode = 'match' | 'turn';
 type Phase = 'idle' | 'running' | 'paused' | 'over';
 type Player = 0 | 1; // 0 is the bottom side, 1 is the top side (upside down)
-type Settings = { mode: Mode; matchMin: number; turnSec: number };
+type Bonus = 'none' | 'increment' | 'delay' | 'bronstein';
+type Settings = {
+  mode: Mode;
+  matchMin: number;
+  turnSec: number;
+  /** Extra time in match mode: none, increment, delay or Bronstein (see BONUS_INFO). */
+  bonusType: Bonus;
+  bonusSec: number;
+};
 
 const KEY = 'photo-sorter/chess-timer/v1';
-const DEFAULTS: Settings = { mode: 'match', matchMin: 10, turnSec: 30 };
+const DEFAULTS: Settings = {
+  mode: 'match',
+  matchMin: 10,
+  turnSec: 30,
+  bonusType: 'none',
+  bonusSec: 3,
+};
 /** The clock starts blinking red when this much (or less) is left. */
 const WARN_MS = 10_000;
-const MATCH_CHOICES = [1, 3, 5, 10, 15, 30, 60];
+/** Ready-made game types: minutes each, plus an optional bonus. */
+const PRESETS: { id: string; label: string; min: number; type: Bonus; sec: number }[] = [
+  { id: 'bullet', label: 'Bullet 1+0', min: 1, type: 'none', sec: 0 },
+  { id: 'bullet-inc', label: 'Bullet 1+1', min: 1, type: 'increment', sec: 1 },
+  { id: 'blitz3', label: 'Blitz 3+2', min: 3, type: 'increment', sec: 2 },
+  { id: 'blitz5', label: 'Blitz 5+3', min: 5, type: 'increment', sec: 3 },
+  { id: 'rapid10', label: 'Rapid 10+0', min: 10, type: 'none', sec: 0 },
+  { id: 'rapid15', label: 'Rapid 15+10', min: 15, type: 'increment', sec: 10 },
+  { id: 'classical', label: 'Classical 90+30', min: 90, type: 'increment', sec: 30 },
+  { id: 'delay', label: '5 min, 3 s delay', min: 5, type: 'delay', sec: 3 },
+  { id: 'bronstein', label: '5 min, 3 s Bronstein', min: 5, type: 'bronstein', sec: 3 },
+];
+const BONUS_INFO: Record<Bonus, { label: string; blurb: string }> = {
+  none: { label: 'None', blurb: 'No extra time.' },
+  increment: {
+    label: 'Increment',
+    blurb: 'After every move you get this many seconds added to your clock.',
+  },
+  delay: {
+    label: 'Delay',
+    blurb: 'Your clock waits this many seconds at the start of each turn before it counts down.',
+  },
+  bronstein: {
+    label: 'Bronstein',
+    blurb: 'After every move you get back the time you used, up to this many seconds.',
+  },
+};
 const TURN_CHOICES = [10, 15, 30, 45, 60, 90, 120];
 
 const RED = '#E53935';
@@ -28,6 +68,14 @@ function stepFor(mode: Mode, v: number): number {
 
 function clampValue(mode: Mode, v: number): number {
   return mode === 'match' ? Math.min(180, Math.max(1, v)) : Math.min(600, Math.max(5, v));
+}
+
+function clampBonus(v: number): number {
+  return Math.min(120, Math.max(1, v));
+}
+
+function bonusStep(v: number): number {
+  return v < 10 ? 1 : 5;
 }
 
 function initialMs(s: Settings): number {
@@ -46,9 +94,16 @@ function format(ms: number): string {
 }
 
 function describe(s: Settings): string {
-  return s.mode === 'match'
-    ? `Match time · ${s.matchMin} min each`
-    : `Per turn · ${s.turnSec} seconds each`;
+  if (s.mode === 'turn') return `Per turn · ${s.turnSec} seconds each`;
+  const extra =
+    s.bonusType === 'increment'
+      ? ` + ${s.bonusSec} s per move`
+      : s.bonusType === 'delay'
+        ? ` · ${s.bonusSec} s delay`
+        : s.bonusType === 'bronstein'
+          ? ` · ${s.bonusSec} s Bronstein`
+          : '';
+  return `Match time · ${s.matchMin} min each${extra}`;
 }
 
 export function ChessTimer({ onExit }: { onExit: () => void }) {
@@ -63,7 +118,19 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
   /** True when we paused the clock just to show a panel, so closing it should resume. */
   const resumeAfter = useRef(false);
   const lastTick = useRef(0);
+  /** Delay still to run off at the start of this turn (ms), and time used this turn (ms). */
+  const delayRef = useRef(0);
+  const usedRef = useRef(0);
+  const [delayLeft, setDelayLeft] = useState(0);
   const init = initialMs(settings);
+  // Extra time only applies in match mode.
+  const bonusType: Bonus = settings.mode === 'match' ? settings.bonusType : 'none';
+  const bonusMs = bonusType === 'none' ? 0 : settings.bonusSec * 1000;
+  const freshTurn = () => {
+    delayRef.current = bonusType === 'delay' ? bonusMs : 0;
+    usedRef.current = 0;
+    setDelayLeft(delayRef.current);
+  };
 
   // Settings are remembered between launches.
   useEffect(() => {
@@ -75,6 +142,12 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
           mode: saved.mode === 'turn' ? 'turn' : 'match',
           matchMin: clampValue('match', Number(saved.matchMin) || DEFAULTS.matchMin),
           turnSec: clampValue('turn', Number(saved.turnSec) || DEFAULTS.turnSec),
+          bonusType: (['increment', 'delay', 'bronstein'] as const).includes(
+            saved.bonusType as 'increment',
+          )
+            ? (saved.bonusType as Bonus)
+            : 'none',
+          bonusSec: clampBonus(Number(saved.bonusSec) || DEFAULTS.bonusSec),
         });
       })
       .catch(() => {});
@@ -102,8 +175,17 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
     lastTick.current = Date.now();
     const id = setInterval(() => {
       const now = Date.now();
-      const dt = now - lastTick.current;
+      let dt = now - lastTick.current;
       lastTick.current = now;
+      // A delay is run off first, without touching the clock.
+      if (delayRef.current > 0) {
+        const used = Math.min(dt, delayRef.current);
+        delayRef.current -= used;
+        dt -= used;
+        setDelayLeft(delayRef.current);
+      }
+      usedRef.current += dt;
+      if (dt <= 0) return;
       setMs((prev) => {
         const next: [number, number] = [prev[0], prev[1]];
         next[active] = Math.max(0, prev[active] - dt);
@@ -131,14 +213,23 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
     }
     if (phase !== 'running' || player !== active) return;
     const other: Player = player === 0 ? 1 : 0;
+    // Extra time earned by the move just made.
+    const earned =
+      bonusType === 'increment'
+        ? bonusMs
+        : bonusType === 'bronstein'
+          ? Math.min(bonusMs, usedRef.current)
+          : 0;
     setActive(other);
-    if (settings.mode === 'turn') {
+    if (settings.mode === 'turn' || earned > 0) {
       setMs((prev) => {
         const next: [number, number] = [prev[0], prev[1]];
-        next[other] = init;
+        if (settings.mode === 'turn') next[other] = init;
+        next[player] += earned;
         return next;
       });
     }
+    freshTurn();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
   };
 
@@ -147,6 +238,7 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
     setMs([init, init]);
     setActive(first);
     setLoser(null);
+    freshTurn();
     setPhase('running');
   };
 
@@ -177,6 +269,9 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
     setLoser(null);
     setActive(first);
     setMs([init, init]);
+    delayRef.current = 0;
+    usedRef.current = 0;
+    setDelayLeft(0);
   };
 
   const locked = phase !== 'idle';
@@ -202,7 +297,12 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
     } else if (isActive) {
       bg = flashRed ? RED : LIGHT;
       fg = flashRed ? '#FFFFFF' : '#101114';
-      label = phase === 'paused' ? 'Paused' : 'Tap when you’ve moved';
+      label =
+        phase === 'paused'
+          ? 'Paused'
+          : delayLeft > 0
+            ? `Delay ${Math.ceil(delayLeft / 1000)} s`
+            : 'Tap when you’ve moved';
     } else {
       label = 'Waiting';
     }
@@ -244,9 +344,12 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
     </Pressable>
   );
 
-  const choices = settings.mode === 'match' ? MATCH_CHOICES : TURN_CHOICES;
   const value = settings.mode === 'match' ? settings.matchMin : settings.turnSec;
   const unit = settings.mode === 'match' ? 'min' : 's';
+  const isPreset = (p: (typeof PRESETS)[number]) =>
+    settings.matchMin === p.min &&
+    settings.bonusType === p.type &&
+    (p.type === 'none' || settings.bonusSec === p.sec);
   const setValue = useCallback(
     (v: number) => {
       const clamped = clampValue(settings.mode, v);
@@ -307,75 +410,172 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
 
       {panel === 'options' && (
         <View style={styles.overlay}>
-          <View style={styles.card}>
+          <View style={[styles.card, styles.cardTall]}>
             <Text style={styles.cardTitle}>Chess timer</Text>
-            {locked && (
+            <ScrollView style={styles.cardScroll} contentContainerStyle={styles.cardScrollBody}>
+              {locked && (
+                <Text style={styles.cardBody}>
+                  A game is in progress. Reset the clock to change these.
+                </Text>
+              )}
+              <View style={styles.segment}>
+                {(['match', 'turn'] as const).map((m) => (
+                  <Pressable
+                    key={m}
+                    disabled={locked}
+                    style={[styles.segmentItem, settings.mode === m && styles.segmentOn, locked && styles.dim]}
+                    onPress={() => saveSettings({ ...settings, mode: m })}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: settings.mode === m }}
+                    testID={`mode-${m}`}
+                  >
+                    <Text style={[styles.segmentText, settings.mode === m && styles.segmentTextOn]}>
+                      {m === 'match' ? 'Match time' : 'Per turn'}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
               <Text style={styles.cardBody}>
-                A game is in progress. Reset the clock to change these.
+                {settings.mode === 'match'
+                  ? 'Each player gets this much time for the whole game. Their clock only runs on their turn.'
+                  : 'Each turn gets this long. It starts over every time play passes to the other player.'}
               </Text>
-            )}
-            <View style={styles.segment}>
-              {(['match', 'turn'] as const).map((m) => (
+
+              {settings.mode === 'match' && (
+                <>
+                  <Text style={styles.sectionLabel}>Game type</Text>
+                  <View style={styles.chips}>
+                    {PRESETS.map((pr) => (
+                      <Pressable
+                        key={pr.id}
+                        disabled={locked}
+                        style={[styles.chip, isPreset(pr) && styles.segmentOn, locked && styles.dim]}
+                        onPress={() =>
+                          saveSettings({
+                            ...settings,
+                            matchMin: pr.min,
+                            bonusType: pr.type,
+                            bonusSec: pr.type === 'none' ? settings.bonusSec : pr.sec,
+                          })
+                        }
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: isPreset(pr) }}
+                        testID={`preset-${pr.id}`}
+                      >
+                        <Text style={[styles.segmentText, isPreset(pr) && styles.segmentTextOn]}>
+                          {pr.label}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  <Text style={styles.sectionLabel}>Time for each player</Text>
+                </>
+              )}
+
+              <View style={styles.stepper}>
                 <Pressable
-                  key={m}
                   disabled={locked}
-                  style={[styles.segmentItem, settings.mode === m && styles.segmentOn, locked && styles.dim]}
-                  onPress={() => saveSettings({ ...settings, mode: m })}
+                  style={[styles.step, locked && styles.dim]}
+                  onPress={() => setValue(value - stepFor(settings.mode, value - 1))}
                   accessibilityRole="button"
-                  accessibilityState={{ selected: settings.mode === m }}
-                  testID={`mode-${m}`}
+                  accessibilityLabel="Less time"
+                  testID="val-minus"
                 >
-                  <Text style={[styles.segmentText, settings.mode === m && styles.segmentTextOn]}>
-                    {m === 'match' ? 'Match time' : 'Per turn'}
-                  </Text>
+                  <Text style={styles.stepText}>−</Text>
                 </Pressable>
-              ))}
-            </View>
-            <Text style={styles.cardBody}>
-              {settings.mode === 'match'
-                ? 'Each player gets this much time for the whole game. Their clock only runs on their turn.'
-                : 'Each turn gets this long. It starts over every time play passes to the other player.'}
-            </Text>
-            <View style={styles.stepper}>
-              <Pressable
-                disabled={locked}
-                style={[styles.step, locked && styles.dim]}
-                onPress={() => setValue(value - stepFor(settings.mode, value - 1))}
-                accessibilityRole="button"
-                accessibilityLabel="Less time"
-                testID="val-minus"
-              >
-                <Text style={styles.stepText}>−</Text>
-              </Pressable>
-              <Text style={styles.stepValue} testID="val-text">
-                {value} {unit}
-              </Text>
-              <Pressable
-                disabled={locked}
-                style={[styles.step, locked && styles.dim]}
-                onPress={() => setValue(value + stepFor(settings.mode, value))}
-                accessibilityRole="button"
-                accessibilityLabel="More time"
-                testID="val-plus"
-              >
-                <Text style={styles.stepText}>+</Text>
-              </Pressable>
-            </View>
-            <View style={styles.chips}>
-              {choices.map((c) => (
+                <Text style={styles.stepValue} testID="val-text">
+                  {value} {unit}
+                </Text>
                 <Pressable
-                  key={c}
                   disabled={locked}
-                  style={[styles.chip, c === value && styles.segmentOn, locked && styles.dim]}
-                  onPress={() => setValue(c)}
+                  style={[styles.step, locked && styles.dim]}
+                  onPress={() => setValue(value + stepFor(settings.mode, value))}
                   accessibilityRole="button"
-                  testID={`chip-${c}`}
+                  accessibilityLabel="More time"
+                  testID="val-plus"
                 >
-                  <Text style={[styles.segmentText, c === value && styles.segmentTextOn]}>{c}</Text>
+                  <Text style={styles.stepText}>+</Text>
                 </Pressable>
-              ))}
-            </View>
-            <Text style={styles.cardBody}>The clock flashes red when 10 seconds are left.</Text>
+              </View>
+
+              {settings.mode === 'turn' ? (
+                <View style={styles.chips}>
+                  {TURN_CHOICES.map((c) => (
+                    <Pressable
+                      key={c}
+                      disabled={locked}
+                      style={[styles.chip, c === value && styles.segmentOn, locked && styles.dim]}
+                      onPress={() => setValue(c)}
+                      accessibilityRole="button"
+                      testID={`chip-${c}`}
+                    >
+                      <Text style={[styles.segmentText, c === value && styles.segmentTextOn]}>{c}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              ) : (
+                <>
+                  <Text style={styles.sectionLabel}>Extra time</Text>
+                  <View style={styles.chips}>
+                    {(Object.keys(BONUS_INFO) as Bonus[]).map((t) => (
+                      <Pressable
+                        key={t}
+                        disabled={locked}
+                        style={[styles.chip, settings.bonusType === t && styles.segmentOn, locked && styles.dim]}
+                        onPress={() => saveSettings({ ...settings, bonusType: t })}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: settings.bonusType === t }}
+                        testID={`bonus-${t}`}
+                      >
+                        <Text style={[styles.segmentText, settings.bonusType === t && styles.segmentTextOn]}>
+                          {BONUS_INFO[t].label}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  <Text style={styles.cardBody}>{BONUS_INFO[settings.bonusType].blurb}</Text>
+                  {settings.bonusType !== 'none' && (
+                    <View style={styles.stepper}>
+                      <Pressable
+                        disabled={locked}
+                        style={[styles.step, locked && styles.dim]}
+                        onPress={() =>
+                          saveSettings({
+                            ...settings,
+                            bonusSec: clampBonus(settings.bonusSec - bonusStep(settings.bonusSec - 1)),
+                          })
+                        }
+                        accessibilityRole="button"
+                        accessibilityLabel="Less extra time"
+                        testID="bonus-minus"
+                      >
+                        <Text style={styles.stepText}>−</Text>
+                      </Pressable>
+                      <Text style={styles.stepValue} testID="bonus-text">
+                        {settings.bonusSec} s
+                      </Text>
+                      <Pressable
+                        disabled={locked}
+                        style={[styles.step, locked && styles.dim]}
+                        onPress={() =>
+                          saveSettings({
+                            ...settings,
+                            bonusSec: clampBonus(settings.bonusSec + bonusStep(settings.bonusSec)),
+                          })
+                        }
+                        accessibilityRole="button"
+                        accessibilityLabel="More extra time"
+                        testID="bonus-plus"
+                      >
+                        <Text style={styles.stepText}>+</Text>
+                      </Pressable>
+                    </View>
+                  )}
+                </>
+              )}
+              <Text style={styles.cardBody}>The clock flashes red when 10 seconds are left.</Text>
+              {locked && <Text style={styles.cardNote}>Leaving ends the current game.</Text>}
+            </ScrollView>
             <View style={styles.cardButtons}>
               <Pressable style={styles.cardButton} onPress={onExit} testID="timer-exit">
                 <Text style={styles.controlText}>Back to photos</Text>
@@ -388,7 +588,6 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
                 <Text style={[styles.controlText, styles.controlPrimaryText]}>Done</Text>
               </Pressable>
             </View>
-            {locked && <Text style={styles.cardNote}>Leaving ends the current game.</Text>}
           </View>
         </View>
       )}
@@ -441,6 +640,10 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   card: { width: '100%', maxWidth: 420, backgroundColor: '#1B1D24', borderRadius: 22, padding: 20, gap: 14 },
+  cardTall: { maxHeight: '100%' },
+  cardScroll: { flexShrink: 1 },
+  cardScrollBody: { gap: 14 },
+  sectionLabel: { color: '#F2F3F5', fontSize: 15, fontWeight: '700', marginTop: 4 },
   cardTitle: { color: '#F2F3F5', fontSize: 20, fontWeight: '700' },
   cardBody: { color: '#A9AEB8', fontSize: 14, lineHeight: 20 },
   cardNote: { color: '#7C828E', fontSize: 13, textAlign: 'center' },
