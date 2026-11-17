@@ -13,6 +13,12 @@ A small phone app for clearing out a photo library one picture at a time.
   with the most photos first), and switch between Version 1 (albums along the top and
   bottom) and Version 2 (all albums in two rows across the bottom); also shows which
   build of the app is running
+- **Chess timer** (a button in Options) – a two-player clock. Set either a total time per
+  player or a time limit per turn. Two big sides (the top one is upside down for the person
+  across from you), and in the middle Options, Start, Pause and Reset (Reset asks first).
+  Tap a side before starting to choose who goes first; during play tap your own side when
+  you've moved. The clock flashes red for the last 10 seconds of a turn, and the screen
+  stays on while it's showing
 - **Double-tap** – favorite (the phone's real Favorites)
 - **Undo** steps back through anything not yet saved
 

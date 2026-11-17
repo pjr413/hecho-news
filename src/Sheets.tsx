@@ -475,6 +475,7 @@ export function OptionsSheet({
   info,
   onPick,
   onAutoFill,
+  onOpenTimer,
   onClose,
 }: {
   visible: boolean;
@@ -482,6 +483,7 @@ export function OptionsSheet({
   info: string;
   onPick: (design: Design) => void;
   onAutoFill: () => Promise<string>;
+  onOpenTimer: () => void;
   onClose: () => void;
 }) {
   const [filling, setFilling] = useState(false);
@@ -550,7 +552,19 @@ export function OptionsSheet({
                 {result}
               </Text>
             )}
-            <Text style={styles.body}>{info}</Text>
+            <Pressable
+            style={styles.choice}
+            onPress={onOpenTimer}
+            accessibilityRole="button"
+            testID="open-timer"
+          >
+            <Text style={styles.plusBig}>♞</Text>
+            <View style={styles.choiceText}>
+              <Text style={styles.lineText}>Chess timer</Text>
+              <Text style={styles.body}>A two-player clock for a game on the table</Text>
+            </View>
+          </Pressable>
+          <Text style={styles.body}>{info}</Text>
           </ScrollView>
           <View style={styles.buttons}>
             <Pressable

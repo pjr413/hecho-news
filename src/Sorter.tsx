@@ -14,6 +14,7 @@ import { scheduleOnRN } from 'react-native-worklets';
 import * as library from './library';
 import { PhotoCard, type Geometry, type PhotoCardHandle, type Role } from './PhotoCard';
 import { buildInfo } from './buildInfo';
+import { ChessTimer } from './ChessTimer';
 import { AlbumPicker, BinSheet, OptionsSheet, RenameSheet, ReviewSheet, SlotMenu } from './Sheets';
 import type { Store } from './store';
 import {
@@ -63,6 +64,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   const [busy, setBusy] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
   const [optionsOpen, setOptionsOpen] = useState(false);
+  const [timerOpen, setTimerOpen] = useState(false);
   const [binOpen, setBinOpen] = useState(false);
   const [binBusy, setBinBusy] = useState(false);
   const [binError, setBinError] = useState<string | null>(null);
@@ -395,6 +397,9 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
     </View>
   );
 
+  // The chess timer takes over the whole screen; this screen keeps its place underneath.
+  if (timerOpen) return <ChessTimer onExit={() => setTimerOpen(false)} />;
+
   return (
     <View
       style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom + 6 }]}
@@ -637,6 +642,10 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         info={buildInfo()}
         onPick={store.setDesign}
         onAutoFill={autoFill}
+        onOpenTimer={() => {
+          setOptionsOpen(false);
+          setTimerOpen(true);
+        }}
         onClose={() => setOptionsOpen(false)}
       />
       <ReviewSheet
