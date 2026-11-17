@@ -23,7 +23,8 @@ A small phone app for clearing out a photo library one picture at a time.
   build of the app is running
 - **Chess timer** (a button in Options) – a two-player clock. Set either a total time per
   player (with ready-made game types such as Blitz 3+2 or Rapid 15+10, and extra time: increment,
-  delay or Bronstein) or a time limit per turn. Two big sides (the top one is upside down for the person
+  delay or Bronstein) or a time limit per turn (optionally carrying your unused time into your next turn, so going
+  faster gives you longer turns). Two big sides (the top one is upside down for the person
   across from you), and in the middle Options, Start, Pause and Reset (Reset asks first).
   Tap a side before starting to choose who goes first; during play tap your own side when
   you've moved. The side slowly turns red from 10 seconds left down to 5, and the screen

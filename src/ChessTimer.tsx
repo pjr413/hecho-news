@@ -11,6 +11,8 @@ type Phase = 'idle' | 'running' | 'paused' | 'over';
 type Player = 0 | 1; // 0 is the bottom side, 1 is the top side (upside down)
 type Bonus = 'none' | 'increment' | 'delay' | 'bronstein';
 type Settings = {
+  /** Per-turn mode only: time left at the end of a turn is added to the player's next turn. */
+  carryOver: boolean;
   mode: Mode;
   matchMin: number;
   turnSec: number;
@@ -21,6 +23,7 @@ type Settings = {
 
 const KEY = 'photo-sorter/chess-timer/v1';
 const DEFAULTS: Settings = {
+  carryOver: false,
   mode: 'match',
   matchMin: 10,
   turnSec: 30,
@@ -104,7 +107,9 @@ function format(ms: number): string {
 }
 
 function describe(s: Settings): string {
-  if (s.mode === 'turn') return `Per turn · ${s.turnSec} seconds each`;
+  if (s.mode === 'turn') {
+    return `Per turn · ${s.turnSec} seconds each${s.carryOver ? ' · unused time carries over' : ''}`;
+  }
   const extra =
     s.bonusType === 'increment'
       ? ` + ${s.bonusSec} s per move`
@@ -128,6 +133,8 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
   /** True when we paused the clock just to show a panel, so closing it should resume. */
   const resumeAfter = useRef(false);
   const lastTick = useRef(0);
+  /** Time each player had left when they last passed the turn (only used when carrying over). */
+  const [carry, setCarry] = useState<[number, number]>([0, 0]);
   /** Delay still to run off at the start of this turn (ms), and time used this turn (ms). */
   const delayRef = useRef(0);
   const usedRef = useRef(0);
@@ -152,6 +159,7 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
           mode: saved.mode === 'turn' ? 'turn' : 'match',
           matchMin: clampValue('match', Number(saved.matchMin) || DEFAULTS.matchMin),
           turnSec: clampValue('turn', Number(saved.turnSec) || DEFAULTS.turnSec),
+          carryOver: saved.carryOver === true,
           bonusType: (['increment', 'delay', 'bronstein'] as const).includes(
             saved.bonusType as 'increment',
           )
@@ -230,11 +238,22 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
         : bonusType === 'bronstein'
           ? Math.min(bonusMs, usedRef.current)
           : 0;
+    // Per turn with carry-over: the next turn is the full time plus whatever the other player
+    // had left when they finished their last one.
+    const carrying = settings.mode === 'turn' && settings.carryOver;
+    const nextTurn = init + (carrying ? carry[other] : 0);
+    if (carrying) {
+      setCarry((c) => {
+        const n: [number, number] = [c[0], c[1]];
+        n[player] = ms[player];
+        return n;
+      });
+    }
     setActive(other);
     if (settings.mode === 'turn' || earned > 0) {
       setMs((prev) => {
         const next: [number, number] = [prev[0], prev[1]];
-        if (settings.mode === 'turn') next[other] = init;
+        if (settings.mode === 'turn') next[other] = nextTurn;
         next[player] += earned;
         return next;
       });
@@ -246,6 +265,7 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
   const start = () => {
     if (phase !== 'idle') return;
     setMs([init, init]);
+    setCarry([0, 0]);
     setActive(first);
     setLoser(null);
     freshTurn();
@@ -279,6 +299,7 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
     setLoser(null);
     setActive(first);
     setMs([init, init]);
+    setCarry([0, 0]);
     delayRef.current = 0;
     usedRef.current = 0;
     setDelayLeft(0);
@@ -313,7 +334,10 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
             ? `Delay ${Math.ceil(delayLeft / 1000)} s`
             : 'Tap when you’ve moved';
     } else {
-      label = 'Waiting';
+      label =
+        settings.mode === 'turn' && settings.carryOver && carry[player] > 0
+          ? `Next turn ${format(init + carry[player])}`
+          : 'Waiting';
     }
 
     return (
@@ -508,6 +532,7 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
               </View>
 
               {settings.mode === 'turn' ? (
+                <>
                 <View style={styles.chips}>
                   {TURN_CHOICES.map((c) => (
                     <Pressable
@@ -522,6 +547,36 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
                     </Pressable>
                   ))}
                 </View>
+                <Text style={styles.sectionLabel}>Carry over unused time</Text>
+                <View style={styles.segment}>
+                  {[false, true].map((on) => (
+                    <Pressable
+                      key={String(on)}
+                      disabled={locked}
+                      style={[
+                        styles.segmentItem,
+                        settings.carryOver === on && styles.segmentOn,
+                        locked && styles.dim,
+                      ]}
+                      onPress={() => saveSettings({ ...settings, carryOver: on })}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: settings.carryOver === on }}
+                      testID={on ? 'carry-on' : 'carry-off'}
+                    >
+                      <Text
+                        style={[styles.segmentText, settings.carryOver === on && styles.segmentTextOn]}
+                      >
+                        {on ? 'On' : 'Off'}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <Text style={styles.cardBody} testID="carry-blurb">
+                  {settings.carryOver
+                    ? `Time you don’t use is added to your next turn, so going faster gives you longer turns. Finish a ${value}-second turn with 10 seconds left and your next one is ${value + 10} seconds.`
+                    : 'Every turn starts over at the full time.'}
+                </Text>
+                </>
               ) : (
                 <>
                   <Text style={styles.sectionLabel}>Extra time</Text>
