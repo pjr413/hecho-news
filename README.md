@@ -47,6 +47,31 @@ npx expo run:ios --device
 npx expo run:android --device
 ```
 
+## Sending updates to the phone (over the air)
+
+Once, from this folder on any computer (needs a free [expo.dev](https://expo.dev) account):
+
+```bash
+npx eas-cli@latest login
+npx eas-cli@latest init                # creates the project on your Expo account
+npx eas-cli@latest update:configure    # adds the update address to app.json; commit that change
+npx expo run:ios --device --configuration Release   # install a build that can receive updates
+```
+
+After that, to ship a change to the phone:
+
+```bash
+git pull
+npx eas-cli@latest update --channel production --message "what changed"
+```
+
+The app downloads it the next time it's opened (close it fully and reopen; if the
+download takes longer than a few seconds it applies on the open after that).
+
+Updates only carry JavaScript and images. If a change adds a package, a permission or
+edits `app.json`, bump `version` in `app.json` and install a fresh build with the cable
+instead; an old build ignores updates made for a newer `version`.
+
 ## Code
 
 | File | What it does |

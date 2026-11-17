@@ -27,13 +27,23 @@
       [
         "expo-media-library",
         {
-          "photosPermission": "Photo Sorter shows your photos so you can sort them into albums and delete the ones you don’t want.",
+          "photosPermission": "Photo Sorter shows your photos so you can sort them into albums and delete the ones you don\u2019t want.",
           "savePhotosPermission": "Photo Sorter adds the photos you keep to your albums.",
           "granularPermissions": [
             "photo"
           ]
         }
       ]
-    ]
+    ],
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 3000,
+      "requestHeaders": {
+        "expo-channel-name": "production"
+      }
+    }
   }
 }
