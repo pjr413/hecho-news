@@ -14,6 +14,7 @@ import {
 import * as library from "./library";
 import type { Store } from "./store";
 import {
+  ALBUM_TYPES,
   DAY_MS,
   DESIGNS,
   RETENTION_CHOICES,
@@ -475,6 +476,8 @@ export function OptionsSheet({
   info,
   onPick,
   onAutoFill,
+  chosen,
+  onToggleType,
   onOpenTimer,
   onClose,
 }: {
@@ -483,6 +486,9 @@ export function OptionsSheet({
   info: string;
   onPick: (design: Design) => void;
   onAutoFill: () => Promise<string>;
+  /** Lower-case names of the albums already in a spot. */
+  chosen: string[];
+  onToggleType: (name: string) => Promise<string>;
   onOpenTimer: () => void;
   onClose: () => void;
 }) {
@@ -524,7 +530,40 @@ export function OptionsSheet({
                 <Text style={styles.tick}>{d.id === design ? "✓" : ""}</Text>
               </Pressable>
             ))}
-            <Text style={styles.section}>Albums</Text>
+            <Text style={styles.section}>Choose album types to create</Text>
+            <Text style={styles.body}>
+              Tap one to put it in the next empty spot, and tap it again to take it out. New
+              albums are created on your phone when you tap Save.
+            </Text>
+            <View style={styles.typeGrid}>
+              {ALBUM_TYPES.map((name, i) => {
+                const on = chosen.includes(name.toLowerCase());
+                return (
+                  <Pressable
+                    key={name}
+                    disabled={filling}
+                    style={[
+                      styles.typeChip,
+                      { borderColor: SLOT_COLORS[i] },
+                      on && { backgroundColor: SLOT_COLORS[i] },
+                      filling && styles.dim,
+                    ]}
+                    onPress={async () => {
+                      setFilling(true);
+                      setResult(await onToggleType(name));
+                      setFilling(false);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: on }}
+                    testID={`type-${name}`}
+                  >
+                    <Text style={[styles.typeText, on && styles.typeTextOn]} numberOfLines={1}>
+                      {name}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
             <Pressable
               style={[styles.choice, filling && styles.dim]}
               disabled={filling}
@@ -654,6 +693,20 @@ const styles = StyleSheet.create({
   },
   plusBig: { color: "#C5C9D2", fontSize: 26, width: 40, textAlign: "center" },
   pickRow: { paddingVertical: 12, paddingHorizontal: 4 },
+  typeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  typeChip: {
+    flexGrow: 1,
+    flexBasis: '22%',
+    height: 46,
+    borderRadius: 14,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+    backgroundColor: '#1B1D24',
+  },
+  typeText: { color: '#F2F3F5', fontSize: 14, fontWeight: '700' },
+  typeTextOn: { color: '#101114' },
   thumbBar: { height: 7, borderRadius: 3, backgroundColor: "#F2A65A" },
   thumbCard: { flex: 1, borderRadius: 4, backgroundColor: "#454B59" },
   chips: {

@@ -350,6 +350,43 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
     );
   };
 
+  /** Adds (or, if it's already there, removes) one of the ready-made album types. */
+  const toggleType = useCallback(
+    async (name: string): Promise<string> => {
+      const same = (a: AlbumRef | null) => !!a && a.name.toLowerCase() === name.toLowerCase();
+      const at = stateRef.current.slots.findIndex(same);
+      if (at >= 0) {
+        const waiting = stateRef.current.pending.some(
+          (d) => d.action.type === 'album' && d.action.slot === at,
+        );
+        if (waiting) return `Photos are waiting to be saved to ${name}. Tap Save first.`;
+        setSlot(at, null);
+        return `Took ${name} out.`;
+      }
+      if (stateRef.current.slots.every(Boolean)) {
+        return 'All eight spots are full. Take one out first.';
+      }
+      // If the phone already has an album with this name, use it instead of making a second one.
+      let existing: DeviceAlbum | undefined;
+      try {
+        existing = (await library.listAlbums()).find(
+          (a) => a.title.toLowerCase() === name.toLowerCase(),
+        );
+      } catch {
+        // Not being able to look is fine: it just gets created on Save.
+      }
+      // The spots may have changed while looking.
+      if (stateRef.current.slots.some(same)) return `${name} is already in a spot.`;
+      const spot = stateRef.current.slots.findIndex((a) => !a);
+      if (spot < 0) return 'All eight spots are full. Take one out first.';
+      setSlot(spot, existing ? { name: existing.title, id: existing.id } : { name });
+      return existing
+        ? `Added ${name}. It uses the album you already have.`
+        : `Added ${name}. It's created when you tap Save.`;
+    },
+    [setSlot, stateRef],
+  );
+
   /** Fills the empty spots that are showing with her biggest albums that aren't placed yet. */
   const autoFill = useCallback(async (): Promise<string> => {
     let albums: DeviceAlbum[];
@@ -642,6 +679,8 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         info={buildInfo()}
         onPick={store.setDesign}
         onAutoFill={autoFill}
+        chosen={slots.flatMap((a) => (a ? [a.name.toLowerCase()] : []))}
+        onToggleType={toggleType}
         onOpenTimer={() => {
           setOptionsOpen(false);
           setTimerOpen(true);

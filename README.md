@@ -9,8 +9,10 @@ A small phone app for clearing out a photo library one picture at a time.
   and a second row of four appears, up to eight in all
 - **Drag onto an album** – file the photo there (tap an album to do the same). Hold an
   album to change it or empty the spot (not while photos are waiting to be saved to it)
-- **Options** (the gear at the top) – **Fill empty spots with my albums** (uses the albums
-  with the most photos first), and switch between Version 1 (albums along the top and
+- **Options** (the gear at the top) – **Choose album types to create** (Family, Friends,
+  Travel, Keepers, Kids, Pets, Food, Funny: tap one to put it in the next empty spot, tap
+  again to take it out), **Fill empty spots with my albums** (uses the albums with the
+  most photos first), and switch between Version 1 (albums along the top and
   bottom) and Version 2 (all albums in two rows across the bottom); also shows which
   build of the app is running
 - **Chess timer** (a button in Options) – a two-player clock. Set either a total time per

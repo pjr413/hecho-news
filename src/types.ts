@@ -36,6 +36,9 @@ export const DESIGNS: { id: Design; name: string; blurb: string }[] = [
 ];
 export const ROW_SIZE = 4;
 
+/** The ready-made album types offered in Options (the colors follow SLOT_COLORS in order). */
+export const ALBUM_TYPES = ['Family', 'Friends', 'Travel', 'Keepers', 'Kids', 'Pets', 'Food', 'Funny'];
+
 export const SLOT_COLORS = [
   '#F2A65A',
   '#EE6C8A',
