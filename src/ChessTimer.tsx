@@ -33,6 +33,8 @@ const DEFAULTS: Settings = {
 /** The side starts turning red when this much is left, and is fully red at FULL_RED_MS. */
 const WARN_MS = 10_000;
 const FULL_RED_MS = 5_000;
+/** The most unused time that can be carried into the next turn. */
+const CARRY_MAX_MS = 15_000;
 /** Ready-made game types: minutes each, plus an optional bonus. */
 const PRESETS: { id: string; label: string; min: number; type: Bonus; sec: number }[] = [
   { id: 'bullet', label: 'Bullet 1+0', min: 1, type: 'none', sec: 0 },
@@ -108,7 +110,7 @@ function format(ms: number): string {
 
 function describe(s: Settings): string {
   if (s.mode === 'turn') {
-    return `Per turn · ${s.turnSec} seconds each${s.carryOver ? ' · unused time carries over' : ''}`;
+    return `Per turn · ${s.turnSec} seconds each${s.carryOver ? ' · carry over up to 15 s' : ''}`;
   }
   const extra =
     s.bonusType === 'increment'
@@ -241,7 +243,7 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
     // Per turn with carry-over: the next turn is the full time plus whatever the other player
     // had left when they finished their last one.
     const carrying = settings.mode === 'turn' && settings.carryOver;
-    const nextTurn = init + (carrying ? carry[other] : 0);
+    const nextTurn = init + (carrying ? Math.min(carry[other], CARRY_MAX_MS) : 0);
     if (carrying) {
       setCarry((c) => {
         const n: [number, number] = [c[0], c[1]];
@@ -336,7 +338,7 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
     } else {
       label =
         settings.mode === 'turn' && settings.carryOver && carry[player] > 0
-          ? `Next turn ${format(init + carry[player])}`
+          ? `Next turn ${format(init + Math.min(carry[player], CARRY_MAX_MS))}`
           : 'Waiting';
     }
 
@@ -573,7 +575,7 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
                 </View>
                 <Text style={styles.cardBody} testID="carry-blurb">
                   {settings.carryOver
-                    ? `Time you don’t use is added to your next turn, so going faster gives you longer turns. Finish a ${value}-second turn with 10 seconds left and your next one is ${value + 10} seconds.`
+                    ? `Time you don’t use is added to your next turn, up to 15 seconds, so going faster gives you longer turns. Finish a ${value}-second turn with 10 seconds left and your next one is ${value + 10} seconds. With 15 or more left, it’s ${value + 15}.`
                     : 'Every turn starts over at the full time.'}
                 </Text>
                 </>
