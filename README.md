@@ -20,7 +20,7 @@ A small phone app for clearing out a photo library one picture at a time.
   delay or Bronstein) or a time limit per turn. Two big sides (the top one is upside down for the person
   across from you), and in the middle Options, Start, Pause and Reset (Reset asks first).
   Tap a side before starting to choose who goes first; during play tap your own side when
-  you've moved. The clock flashes red for the last 10 seconds of a turn, and the screen
+  you've moved. The side slowly turns red from 10 seconds left down to 5, and the screen
   stays on while it's showing
 - **Double-tap** – favorite (the phone's real Favorites)
 - **Undo** steps back through anything not yet saved

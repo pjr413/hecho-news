@@ -27,8 +27,9 @@ const DEFAULTS: Settings = {
   bonusType: 'none',
   bonusSec: 3,
 };
-/** The clock starts blinking red when this much (or less) is left. */
+/** The side starts turning red when this much is left, and is fully red at FULL_RED_MS. */
 const WARN_MS = 10_000;
+const FULL_RED_MS = 5_000;
 /** Ready-made game types: minutes each, plus an optional bonus. */
 const PRESETS: { id: string; label: string; min: number; type: Bonus; sec: number }[] = [
   { id: 'bullet', label: 'Bullet 1+0', min: 1, type: 'none', sec: 0 },
@@ -58,9 +59,18 @@ const BONUS_INFO: Record<Bonus, { label: string; blurb: string }> = {
 };
 const TURN_CHOICES = [10, 15, 30, 45, 60, 90, 120];
 
-const RED = '#E53935';
-const LIGHT = '#F2F3F5';
 const DARK = '#1B1D24';
+type Rgb = [number, number, number];
+const LIGHT_RGB: Rgb = [242, 243, 245];
+const RED_RGB: Rgb = [229, 57, 53];
+const INK_RGB: Rgb = [16, 17, 20];
+const WHITE_RGB: Rgb = [255, 255, 255];
+
+/** A color part of the way from a to b (t from 0 to 1). */
+function mix(a: Rgb, b: Rgb, t: number): string {
+  const c = (i: number) => Math.round(a[i] + (b[i] - a[i]) * t);
+  return `rgb(${c(0)}, ${c(1)}, ${c(2)})`;
+}
 
 function stepFor(mode: Mode, v: number): number {
   return mode === 'match' ? (v < 10 ? 1 : 5) : v < 60 ? 5 : 15;
@@ -279,9 +289,8 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
   const side = (player: Player) => {
     const isActive = (phase === 'running' || phase === 'paused') && active === player;
     const left = ms[player];
-    const low = phase === 'running' && isActive && left <= WARN_MS && left > 0;
-    // Flash on and off twice a second, driven by the time left so it's always in step.
-    const flashRed = low && Math.floor(left / 500) % 2 === 1;
+    // Fades from the normal color to red as the time left drops from 10 s to 5 s.
+    const redness = Math.min(1, Math.max(0, (WARN_MS - left) / (WARN_MS - FULL_RED_MS)));
 
     let bg = DARK;
     let fg = '#8A90A0';
@@ -295,8 +304,8 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
       fg = '#E5E7EB';
       label = first === player ? 'Goes first' : 'Tap to go first';
     } else if (isActive) {
-      bg = flashRed ? RED : LIGHT;
-      fg = flashRed ? '#FFFFFF' : '#101114';
+      bg = mix(LIGHT_RGB, RED_RGB, redness);
+      fg = mix(INK_RGB, WHITE_RGB, redness);
       label =
         phase === 'paused'
           ? 'Paused'
@@ -573,7 +582,7 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
                   )}
                 </>
               )}
-              <Text style={styles.cardBody}>The clock flashes red when 10 seconds are left.</Text>
+              <Text style={styles.cardBody}>The clock slowly turns red from 10 seconds left down to 5.</Text>
               {locked && <Text style={styles.cardNote}>Leaving ends the current game.</Text>}
             </ScrollView>
             <View style={styles.cardButtons}>
