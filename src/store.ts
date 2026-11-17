@@ -81,15 +81,14 @@ export function useStore() {
           const kept = pending.filter((d) => (d.action.type as string) === 'keep').map((d) => d.photo.id);
           const waiting = pending.filter((d) => (d.action.type as string) !== 'keep');
           let slots = normalizeSlots(saved.slots);
-          if (saved.slotsVersion !== SLOTS_VERSION) {
-            // Start with empty spots. Only keep one if photos are still waiting to be filed
-            // into it, so nothing already chosen gets stranded.
-            const inUse = new Set<number>();
-            waiting.forEach((d) => {
-              if (d.action.type === 'album') inUse.add(d.action.slot);
-            });
-            slots = slots.map((a, i) => (inUse.has(i) ? a : null));
-          }
+          // Data from before the spots started empty: clear the old ready-made albums.
+          if (saved.slotsVersion !== SLOTS_VERSION) slots = slots.map(() => null);
+          // Photos are filed into albums as soon as they're dropped. Ones that were filed in
+          // an earlier session are simply done; any that never got filed (from the old Save
+          // flow) go back to the photos to sort, so nothing is filed that wasn't confirmed.
+          const filedBefore = waiting
+            .filter((d) => d.action.type === 'album' && d.filed)
+            .map((d) => d.photo.id);
           setState({
             slots,
             slotsVersion: SLOTS_VERSION,
@@ -98,8 +97,8 @@ export function useStore() {
               MAX_ROWS,
               Math.max(rowsNeeded(slots), Math.floor(Number(saved.albumRows)) || 1),
             ),
-            pending: waiting,
-            reviewed: [...(saved.reviewed ?? []), ...kept],
+            pending: waiting.filter((d) => d.action.type === 'trash'),
+            reviewed: [...(saved.reviewed ?? []), ...kept, ...filedBefore],
             retentionDays: saved.retentionDays ?? DEFAULT_RETENTION_DAYS,
             design: saved.design === 2 ? 2 : 1,
           });
@@ -157,6 +156,14 @@ export function useStore() {
     }));
   }, []);
 
+  /** Records that a dropped photo has been filed, and into which album. */
+  const markFiled = useCallback((photoId: string, album: AlbumRef) => {
+    setState((s) => ({
+      ...s,
+      pending: s.pending.map((d) => (d.photo.id === photoId ? { ...d, filed: true, album } : d)),
+    }));
+  }, []);
+
   const setAlbumRows = useCallback((rows: number) => {
     setState((s) => ({
       ...s,
@@ -172,7 +179,7 @@ export function useStore() {
     setState((s) => ({ ...s, retentionDays }));
   }, []);
 
-  return { ready, ...state, stateRef, push, takeBack, settle, markSeen, setSlot, setSlotId, setRetentionDays, setDesign, setAlbumRows };
+  return { ready, ...state, stateRef, push, takeBack, settle, markSeen, setSlot, setSlotId, setRetentionDays, setDesign, setAlbumRows, markFiled };
 }
 
 export type Store = ReturnType<typeof useStore>;

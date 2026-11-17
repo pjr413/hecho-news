@@ -18,8 +18,18 @@ export type Choice = { type: 'trash' } | { type: 'album'; slot: number };
 /** Everything a swipe or button can do: decide, or move along the timeline. */
 export type Action = Choice | { type: 'next' } | { type: 'prev' };
 
-/** `at` is when the choice was made; the trash bin counts its days from it. */
-export type Decision = { photo: Photo; action: Choice; at: number };
+/**
+ * `at` is when the choice was made; the trash bin counts its days from it. A photo dropped on an
+ * album is filed straight away: `filed` turns true once that has happened, and `album` records
+ * where it went (so Undo can take it back out).
+ */
+export type Decision = {
+  photo: Photo;
+  action: Choice;
+  at: number;
+  filed?: boolean;
+  album?: AlbumRef;
+};
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
 export const RETENTION_CHOICES = [3, 7, 14, 30];

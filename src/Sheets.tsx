@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -24,6 +25,7 @@ import {
   type AlbumRef,
   type Design,
   type DeviceAlbum,
+  type Photo,
 } from "./types";
 
 export function RenameSheet({
@@ -54,8 +56,7 @@ export function RenameSheet({
         <View style={styles.sheet}>
           <Text style={styles.title}>{title}</Text>
           <Text style={styles.body}>
-            It's created on your phone the first time you tap Save. Photos you
-            drop here are added to it.
+            It's created on your phone the first time you put a photo in it.
           </Text>
           <TextInput
             value={text}
@@ -80,91 +81,6 @@ export function RenameSheet({
               onPress={() => onSave(clean)}
             >
               <Text style={[styles.buttonText, styles.primaryText]}>Save</Text>
-            </Pressable>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
-export function ReviewSheet({
-  visible,
-  store,
-  busy,
-  error,
-  onClose,
-  onApply,
-}: {
-  visible: boolean;
-  store: Store;
-  busy: boolean;
-  error: string | null;
-  onClose: () => void;
-  onApply: () => void;
-}) {
-  const albums = store.slots
-    .map((album, slot) => ({
-      name: album?.name ?? "",
-      slot,
-      count: store.pending.filter(
-        (d) => d.action.type === "album" && d.action.slot === slot,
-      ).length,
-    }))
-    .filter((a) => a.count > 0);
-  const nothing = !albums.length;
-
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-    >
-      <View style={[styles.backdrop, styles.bottom]}>
-        <View style={[styles.sheet, styles.tall]}>
-          <Text style={styles.title}>Save to albums</Text>
-          <ScrollView
-            style={styles.scroll}
-            contentContainerStyle={styles.scrollBody}
-          >
-            {nothing && <Text style={styles.body}>Nothing left to save.</Text>}
-            {albums.map((a) => (
-              <View key={a.slot} style={styles.line}>
-                <View
-                  style={[styles.dot, { backgroundColor: slotColor(a.slot) }]}
-                />
-                <Text style={styles.lineText} numberOfLines={1}>
-                  {a.name}
-                </Text>
-                <Text style={styles.lineCount}>
-                  {a.count} {a.count === 1 ? "photo" : "photos"}
-                </Text>
-              </View>
-            ))}
-          </ScrollView>
-          {error && <Text style={styles.error}>{error}</Text>}
-          <View style={styles.buttons}>
-            <Pressable style={styles.button} onPress={onClose} disabled={busy}>
-              <Text style={styles.buttonText}>Not yet</Text>
-            </Pressable>
-            <Pressable
-              style={[
-                styles.button,
-                styles.primary,
-                (busy || nothing) && styles.dim,
-              ]}
-              disabled={busy || nothing}
-              onPress={onApply}
-              testID="apply"
-            >
-              {busy ? (
-                <ActivityIndicator color="#101114" />
-              ) : (
-                <Text style={[styles.buttonText, styles.primaryText]}>
-                  Save
-                </Text>
-              )}
             </Pressable>
           </View>
         </View>
@@ -393,58 +309,171 @@ export function AlbumPicker({
 }
 
 /** What you can do with a filled spot: swap its album or empty it. */
-export function SlotMenu({
+/** Opens an album: what's in it, and the options to remove it from the app or delete it. */
+export function AlbumView({
   visible,
-  name,
-  waiting,
-  onChange,
+  album,
   onRemove,
+  onDelete,
   onClose,
 }: {
   visible: boolean;
-  name: string;
-  /** How many photos are waiting to be saved into this album. */
-  waiting: number;
-  onChange: () => void;
+  album: AlbumRef | null;
+  /** Takes it out of Photo Sorter only. */
   onRemove: () => void;
+  /** Really deletes the album from the phone. Rejects if it couldn't. */
+  onDelete: () => Promise<void>;
   onClose: () => void;
 }) {
-  const photos = `${waiting} ${waiting === 1 ? 'photo' : 'photos'}`;
+  const [info, setInfo] = useState<{ count: number; photos: Photo[] } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const id = album?.id;
+  const name = album?.name ?? '';
+
+  useEffect(() => {
+    setConfirming(false);
+    setDeleting(false);
+    setDeleteError(null);
+    setInfo(null);
+    setError(null);
+    if (!visible || !id) return;
+    let live = true;
+    library
+      .albumContents(id)
+      .then((r) => live && setInfo(r))
+      .catch(() => live && setError("Couldn't look inside this album."));
+    return () => {
+      live = false;
+    };
+  }, [visible, id]);
+
+  const count = info?.count;
+  const what =
+    count === undefined
+      ? 'the photos in it'
+      : `the ${count} ${count === 1 ? 'photo' : 'photos'} in it`;
+  const confirmText =
+    Platform.OS === 'android'
+      ? `“${name}” and ${what} will be deleted from your phone. This can’t be undone.`
+      : `“${name}” will be deleted from the Photos app on your phone. ${what[0].toUpperCase()}${what.slice(1)} won’t be deleted: they stay in your library. It will also be removed from Photo Sorter.`;
+
+  const doDelete = async () => {
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await onDelete();
+    } catch {
+      setDeleteError("Couldn't delete the album. Nothing was changed.");
+    }
+    setDeleting(false);
+  };
+
+  const summary = !id
+    ? 'Nothing is in this album yet. It’s created on your phone when you first put a photo in it.'
+    : error
+      ? error
+      : info
+        ? `${info.count} ${info.count === 1 ? 'photo' : 'photos'}${
+            info.count > info.photos.length ? ` · showing the newest ${info.photos.length}` : ''
+          }`
+        : 'Looking inside…';
+
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={confirming ? () => setConfirming(false) : onClose}
+    >
       <View style={[styles.backdrop, styles.bottom]}>
-        <View style={styles.sheet}>
-          <Text style={styles.title} numberOfLines={1}>
-            {name}
-          </Text>
-          <Text style={styles.body}>
-            {waiting > 0
-              ? `${photos} ${waiting === 1 ? 'is' : 'are'} waiting to be saved to this album. If you remove it, ${waiting === 1 ? 'that photo goes' : 'they go'} back to your photos to sort again. The album and its photos stay on your phone, and nothing is deleted.`
-              : 'Removing it only takes it out of Photo Sorter. The album and its photos stay on your phone, and nothing is deleted.'}
-          </Text>
-          <Pressable
-            style={[styles.menuButton, styles.danger]}
-            onPress={onRemove}
-            accessibilityRole="button"
-            testID="remove-album"
-          >
-            <Text style={styles.buttonText}>
-              {waiting > 0 ? `Remove and put ${photos} back` : 'Remove from Photo Sorter'}
+        {confirming ? (
+          <View style={styles.sheet}>
+            <Text style={styles.title}>Delete this album?</Text>
+            <Text style={styles.body} testID="album-confirm-text">
+              {confirmText}
             </Text>
-          </Pressable>
-          <Pressable
-            style={[styles.menuButton, waiting > 0 && styles.dim]}
-            disabled={waiting > 0}
-            onPress={onChange}
-            accessibilityRole="button"
-            testID="change-album"
-          >
-            <Text style={styles.buttonText}>Change album</Text>
-          </Pressable>
-          <Pressable style={[styles.menuButton, styles.primary]} onPress={onClose}>
-            <Text style={[styles.buttonText, styles.primaryText]}>Close</Text>
-          </Pressable>
-        </View>
+            {deleteError && <Text style={styles.error}>{deleteError}</Text>}
+            <Pressable
+              style={[styles.menuButton, styles.danger, deleting && styles.dim]}
+              disabled={deleting}
+              onPress={doDelete}
+              accessibilityRole="button"
+              testID="album-confirm-delete"
+            >
+              {deleting ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.buttonText}>Delete album</Text>
+              )}
+            </Pressable>
+            <Pressable
+              style={[styles.menuButton, styles.primary]}
+              disabled={deleting}
+              onPress={() => setConfirming(false)}
+              accessibilityRole="button"
+              testID="album-cancel-delete"
+            >
+              <Text style={[styles.buttonText, styles.primaryText]}>Cancel</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <View style={[styles.sheet, styles.tall]}>
+            <Text style={styles.title} numberOfLines={1}>
+              {name}
+            </Text>
+            <Text style={styles.body} testID="album-count">
+              {summary}
+            </Text>
+            {info && info.photos.length > 0 && (
+              <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollBody}>
+                <View style={styles.grid}>
+                  {info.photos.map((p) => (
+                    <Image
+                      key={p.id}
+                      source={{ uri: p.uri }}
+                      style={styles.thumb}
+                      contentFit="cover"
+                      testID="album-photo"
+                    />
+                  ))}
+                </View>
+              </ScrollView>
+            )}
+            <Pressable
+              style={styles.menuButton}
+              onPress={onRemove}
+              accessibilityRole="button"
+              testID="album-remove"
+            >
+              <Text style={styles.buttonText}>Remove from Photo Sorter</Text>
+            </Pressable>
+            <Text style={styles.footnote}>
+              Removing only takes it out of Photo Sorter. The album and its photos stay on your
+              phone.
+            </Text>
+            {id && (
+              <Pressable
+                style={[styles.menuButton, styles.danger]}
+                onPress={() => setConfirming(true)}
+                accessibilityRole="button"
+                testID="album-delete"
+              >
+                <Text style={styles.buttonText}>Delete album…</Text>
+              </Pressable>
+            )}
+            <Pressable
+              style={[styles.menuButton, styles.primary]}
+              onPress={onClose}
+              accessibilityRole="button"
+              testID="album-close"
+            >
+              <Text style={[styles.buttonText, styles.primaryText]}>Close</Text>
+            </Pressable>
+          </View>
+        )}
       </View>
     </Modal>
   );
@@ -563,7 +592,7 @@ export function OptionsSheet({
             <Text style={styles.section}>Choose album types to create</Text>
             <Text style={styles.body}>
               Tap one to put it in the next empty spot, and tap it again to take it out. New
-              albums are created on your phone when you tap Save.
+              albums are created on your phone when you first put a photo in them.
             </Text>
             <View style={styles.typeGrid}>
               {ALBUM_TYPES.map((name, i) => {
@@ -700,6 +729,7 @@ const styles = StyleSheet.create({
   },
   error: { color: "#FF8A8A", fontSize: 14, lineHeight: 20 },
   danger: { backgroundColor: "#B3303C" },
+  footnote: { color: "#7C828E", fontSize: 13, lineHeight: 18, textAlign: "center" },
   menuButton: {
     height: 48,
     borderRadius: 24,

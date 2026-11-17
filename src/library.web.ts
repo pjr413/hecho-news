@@ -41,7 +41,7 @@ export async function fetchPage(offset: number, limit: number): Promise<Photo[]>
 
 export async function setFavorite(_id: string, _value: boolean): Promise<void> {}
 
-const SAMPLE_ALBUMS: DeviceAlbum[] = [
+let sampleAlbums: DeviceAlbum[] = [
   { id: 'demo-a1', title: 'Family', count: 412 },
   { id: 'demo-a2', title: 'Vacation 2024', count: 268 },
   { id: 'demo-a3', title: 'Pets', count: 190 },
@@ -49,13 +49,37 @@ const SAMPLE_ALBUMS: DeviceAlbum[] = [
   { id: 'demo-a5', title: 'Kids', count: 64 },
   { id: 'demo-a6', title: 'Garden', count: 31 },
 ];
+/** Photos filed into albums during this preview, by album id (newest first). */
+const filed: Record<string, Photo[]> = {};
 
 export async function listAlbums(): Promise<DeviceAlbum[]> {
-  return SAMPLE_ALBUMS;
+  return sampleAlbums.map((a) => ({ ...a, count: (a.count ?? 0) + (filed[a.id]?.length ?? 0) }));
 }
 
-export async function fileIntoAlbum(album: AlbumRef, _ids: string[]): Promise<string> {
-  return album.id ?? `demo-${album.name.toLowerCase()}`;
+export async function fileIntoAlbum(album: AlbumRef, ids: string[]): Promise<string> {
+  const id = album.id ?? `demo-${album.name.toLowerCase()}`;
+  if (!sampleAlbums.some((a) => a.id === id)) sampleAlbums = [...sampleAlbums, { id, title: album.name, count: 0 }];
+  const moved = photos.filter((p) => ids.includes(p.id));
+  filed[id] = [...moved, ...(filed[id] ?? [])];
+  return id;
+}
+
+export async function albumContents(id: string): Promise<{ count: number; photos: Photo[] }> {
+  const base = sampleAlbums.find((a) => a.id === id);
+  if (!base) throw new Error('No such album');
+  const mine = filed[id] ?? [];
+  // Pad with sample pictures so a big album looks like one.
+  const pad = Array.from({ length: Math.min(12, base.count ?? 0) }, (_, i) => sample(100 + i));
+  return { count: (base.count ?? 0) + mine.length, photos: [...mine, ...pad] };
+}
+
+export async function removeFromAlbum(albumId: string, photoId: string): Promise<void> {
+  filed[albumId] = (filed[albumId] ?? []).filter((p) => p.id !== photoId);
+}
+
+export async function deleteAlbum(albumId: string): Promise<void> {
+  sampleAlbums = sampleAlbums.filter((a) => a.id !== albumId);
+  delete filed[albumId];
 }
 
 export async function deletePhotos(ids: string[]): Promise<void> {

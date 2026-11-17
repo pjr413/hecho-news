@@ -6,11 +6,15 @@ A small phone app for clearing out a photo library one picture at a time.
 - **Flick up**, or **pinch two fingers together** – move the photo to the trash bin
 - **Album spots** – empty dotted spots, four to a row, one row to begin with. Tap a **+**
   to pick one of the albums already on the phone (biggest first), or make a new one. In
-  Options you choose how many rows you want, from one to four
-- **Drag onto an album** – file the photo there (tap an album to do the same). Hold an
-  album for three seconds (a red fill shows the time) to remove it from Photo Sorter or change
-  it. Removing only takes it out of the app; the album and its photos stay on the phone, and
-  any photos still waiting to be saved to it go back to your photos to sort again
+  Options you choose how many rows you want, from one to four. A new album is created on
+  the phone the first time you put a photo in it
+- **Drag onto an album** – the photo is put in that album straight away (tap an album to
+  do the same). There's no Save step. **Undo** takes the latest one back out (on iPhone;
+  Android doesn't let an app take a photo out of an album)
+- **Hold an album for one second** – opens it: you see what's in it, and can **Remove it from
+  Photo Sorter** (it only stops showing in the app) or **Delete the album** from the phone,
+  which asks first. On iPhone deleting an album keeps its photos in your library; on Android
+  the photos in it are deleted too, and the confirmation says so
 - **Options** (the gear at the top) – **Choose album types to create** (Family, Friends,
   Travel, Keepers, Kids, Pets, Food, Funny: tap one to put it in the next empty spot, tap
   again to take it out), **Fill empty spots with my albums** (uses the albums with the
@@ -25,13 +29,12 @@ A small phone app for clearing out a photo library one picture at a time.
   you've moved. The side slowly turns red from 10 seconds left down to 5, and the screen
   stays on while it's showing
 - **Double-tap** – favorite (the phone's real Favorites)
-- **Undo** steps back through anything not yet saved
+- **Undo** steps back the latest choice, whether it was a trash or an album drop
 
 Photos you swipe past are remembered, so next time the app opens where you left off.
 
-Nothing touches the photo library straight away:
+The trash bin is the one safety net for deleting photos:
 
-- **Save** files the keepers into their albums.
 - **Bin** is the trash bin. Photos wait there for 7 days (or 3, 14 or 30) and can
   be put back with a tap. When their days run out they are deleted from the phone
   the next time the app is opened; the phone asks once to confirm, as it does for

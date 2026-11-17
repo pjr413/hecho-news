@@ -1,4 +1,5 @@
 // Real photo library access (iOS / Android). The web build uses library.web.ts.
+import { Platform } from 'react-native';
 import {
   Album,
   AlbumType,
@@ -91,6 +92,35 @@ export async function fileIntoAlbum(album: AlbumRef, ids: string[]): Promise<str
   }
   const created = await Album.create(album.name, assets, true);
   return created.id;
+}
+
+/** What's in an album: how many photos, and the newest of them to show. */
+export async function albumContents(
+  id: string,
+  limit = 90,
+): Promise<{ count: number; photos: Photo[] }> {
+  const album = new Album(id);
+  const count = await album.getAssetCount();
+  const rows = await new Query()
+    .album(album)
+    .orderBy({ key: AssetField.CREATION_TIME, ascending: false })
+    .limit(limit)
+    .exeForMetadata();
+  return { count, photos: rows.map((r) => ({ id: r.id, uri: r.id, favorite: r.isFavorite })) };
+}
+
+/** Takes a photo back out of an album without deleting it. iPhone only: Android can't. */
+export async function removeFromAlbum(albumId: string, photoId: string): Promise<void> {
+  if (Platform.OS !== 'ios') throw new Error('Android can’t take a photo out of an album');
+  await new Album(albumId).removeAssets([new Asset(photoId)]);
+}
+
+/**
+ * Deletes the album itself. On iPhone the photos in it stay in the library; on Android the
+ * photos in an album are deleted with it (the system doesn't allow otherwise).
+ */
+export async function deleteAlbum(albumId: string): Promise<void> {
+  await Album.delete([new Album(albumId)], false);
 }
 
 /** One system confirmation for the whole batch. On iOS they land in Recently Deleted. */
