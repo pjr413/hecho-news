@@ -27,8 +27,8 @@ import { ROW_SIZE, type Action, type Photo } from './types';
 export type Geometry = {
   width: number;
   height: number;
-  /** How many albums exist; tiles that aren't there can't be dropped on. */
-  albums: number;
+  /** Bit i is set when spot i has an album; empty spots can't be dropped on. */
+  filled: number;
   /** Where a finger counts as over the first row of albums (slots 0-3)... */
   aMin: number;
   aMax: number;
@@ -131,7 +131,7 @@ export const PhotoCard = forwardRef<PhotoCardHandle, Props>(function PhotoCard(
         : y >= g.bMin && y < g.bMax
           ? ROW_SIZE + column
           : -1;
-    return slot < g.albums ? slot : -1;
+    return slot >= 0 && (g.filled & (1 << slot)) !== 0 ? slot : -1;
   };
 
   const leave = (action: Action) => {

@@ -5,6 +5,7 @@ import {
   DEFAULT_RETENTION_DAYS,
   MAX_ALBUMS,
   type Design,
+  type AlbumRef,
   type Choice,
   type Decision,
   type Photo,
@@ -13,7 +14,8 @@ import {
 const KEY = 'photo-sorter/v1';
 
 type Saved = {
-  slots: string[];
+  /** Always MAX_ALBUMS long; null is an empty spot. */
+  slots: (AlbumRef | null)[];
   /**
    * Choices not yet written to the photo library, oldest first. Also the undo history.
    * The trash ones are the trash bin: they wait here until their days run out.
@@ -27,8 +29,22 @@ type Saved = {
   design: Design;
 };
 
+/** Older versions saved plain names in order; spots are now fixed places that can be empty. */
+function normalizeSlots(raw: unknown): (AlbumRef | null)[] {
+  const out: (AlbumRef | null)[] = Array.from({ length: MAX_ALBUMS }, () => null);
+  if (Array.isArray(raw)) {
+    raw.slice(0, MAX_ALBUMS).forEach((v, i) => {
+      if (typeof v === 'string' && v) out[i] = { name: v };
+      else if (v && typeof v === 'object' && typeof (v as AlbumRef).name === 'string') {
+        out[i] = { name: (v as AlbumRef).name, id: (v as AlbumRef).id };
+      }
+    });
+  }
+  return out;
+}
+
 const EMPTY: Saved = {
-  slots: [],
+  slots: normalizeSlots(null),
   pending: [],
   reviewed: [],
   retentionDays: DEFAULT_RETENTION_DAYS,
@@ -52,7 +68,7 @@ export function useStore() {
           // Older versions saved a "keep" choice; it needs no library work, so just settle it.
           const kept = pending.filter((d) => (d.action.type as string) === 'keep').map((d) => d.photo.id);
           setState({
-            slots: Array.isArray(saved.slots) ? saved.slots.slice(0, MAX_ALBUMS) : [],
+            slots: normalizeSlots(saved.slots),
             pending: pending.filter((d) => (d.action.type as string) !== 'keep'),
             reviewed: [...(saved.reviewed ?? []), ...kept],
             retentionDays: saved.retentionDays ?? DEFAULT_RETENTION_DAYS,
@@ -99,12 +115,17 @@ export function useStore() {
     setState((s) => (s.reviewed.includes(photoId) ? s : { ...s, reviewed: [...s.reviewed, photoId] }));
   }, []);
 
-  const addSlot = useCallback((name: string) => {
-    setState((s) => (s.slots.length >= MAX_ALBUMS ? s : { ...s, slots: [...s.slots, name] }));
+  /** Puts an album in a spot, or empties it with null. */
+  const setSlot = useCallback((slot: number, album: AlbumRef | null) => {
+    setState((s) => ({ ...s, slots: s.slots.map((a, i) => (i === slot ? album : a)) }));
   }, []);
 
-  const renameSlot = useCallback((slot: number, name: string) => {
-    setState((s) => ({ ...s, slots: s.slots.map((n, i) => (i === slot ? name : n)) }));
+  /** Remembers the phone's id for an album once it exists, so later saves find it exactly. */
+  const setSlotId = useCallback((slot: number, id: string) => {
+    setState((s) => ({
+      ...s,
+      slots: s.slots.map((a, i) => (i === slot && a ? { ...a, id } : a)),
+    }));
   }, []);
 
   const setDesign = useCallback((design: Design) => {
@@ -115,7 +136,7 @@ export function useStore() {
     setState((s) => ({ ...s, retentionDays }));
   }, []);
 
-  return { ready, ...state, stateRef, push, takeBack, settle, markSeen, addSlot, renameSlot, setRetentionDays, setDesign };
+  return { ready, ...state, stateRef, push, takeBack, settle, markSeen, setSlot, setSlotId, setRetentionDays, setDesign };
 }
 
 export type Store = ReturnType<typeof useStore>;

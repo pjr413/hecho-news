@@ -14,7 +14,7 @@ import { scheduleOnRN } from 'react-native-worklets';
 import * as library from './library';
 import { PhotoCard, type Geometry, type PhotoCardHandle, type Role } from './PhotoCard';
 import { buildInfo } from './buildInfo';
-import { BinSheet, OptionsSheet, RenameSheet, ReviewSheet } from './Sheets';
+import { AlbumPicker, BinSheet, OptionsSheet, RenameSheet, ReviewSheet, SlotMenu } from './Sheets';
 import type { Store } from './store';
 import {
   DAY_MS,
@@ -23,6 +23,8 @@ import {
   SLOT_COLORS,
   type Access,
   type Action,
+  type AlbumRef,
+  type DeviceAlbum,
   type Photo,
 } from './types';
 
@@ -51,8 +53,12 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [favorites, setFavorites] = useState<Record<string, boolean>>({});
   const [status, setStatus] = useState('');
-  /** An album slot being renamed, 'new' for a new album, or null when closed. */
-  const [editing, setEditing] = useState<number | 'new' | null>(null);
+  /** The album spot being filled from the picker, or null. */
+  const [picking, setPicking] = useState<number | null>(null);
+  /** The spot getting a brand-new album (asking for its name), or null. */
+  const [naming, setNaming] = useState<number | null>(null);
+  /** The filled spot whose menu (change / remove) is open, or null. */
+  const [menuSlot, setMenuSlot] = useState<number | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
@@ -65,7 +71,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   photosRef.current = photos;
   const indexRef = useRef(index);
   indexRef.current = index;
-  const { push, takeBack, settle, markSeen, stateRef } = store;
+  const { push, takeBack, settle, markSeen, setSlot, setSlotId, stateRef } = store;
   const offsetRef = useRef(0);
   const loadingRef = useRef(false);
   const topCard = useRef<PhotoCardHandle>(null);
@@ -76,7 +82,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   const geometry = useSharedValue<Geometry>({
     width: 1,
     height: 1,
-    albums: 0,
+    filled: 0,
     aMin: 0,
     aMax: 0,
     aCenter: 0,
@@ -93,7 +99,10 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
     },
   );
 
-  const albumCount = store.slots.length;
+  const slots = store.slots;
+  const filledMask = slots.reduce((m, a, i) => (a ? m | (1 << i) : m), 0);
+  // The second row only appears once every spot in the first row has an album.
+  const rowBVisible = slots.slice(0, ROW_SIZE).every(Boolean);
   const design = store.design;
   const designRef = useRef(design);
   designRef.current = design;
@@ -130,15 +139,14 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   }, [geometry]);
 
   useEffect(() => {
-    // The second row only exists once the first is full.
-    if (albumCount < ROW_SIZE) rowRects.current.b = undefined;
+    if (!rowBVisible) rowRects.current.b = undefined;
     geometry.modify((g) => {
       'worklet';
-      g.albums = albumCount;
+      g.filled = filledMask;
       return g;
     });
     applyZones();
-  }, [albumCount, design, geometry, applyZones]);
+  }, [filledMask, rowBVisible, design, geometry, applyZones]);
 
   const loadMore = useCallback(async () => {
     if (loadingRef.current) return;
@@ -208,7 +216,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
       setStatus(
         action.type === 'trash'
           ? 'Moved to trash bin'
-          : `Added to ${stateRef.current.slots[action.slot]}`,
+          : `Added to ${stateRef.current.slots[action.slot]?.name ?? 'album'}`,
       );
     },
     [push, markSeen, stateRef],
@@ -252,11 +260,13 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
     try {
       const { pending, slots } = stateRef.current;
       for (let slot = 0; slot < slots.length; slot++) {
+        const album = slots[slot];
         const ids = pending
           .filter((d) => d.action.type === 'album' && d.action.slot === slot)
           .map((d) => d.photo.id);
-        if (!ids.length) continue;
-        await library.fileIntoAlbum(slots[slot], ids);
+        if (!ids.length || !album) continue;
+        const id = await library.fileIntoAlbum(album, ids);
+        if (!album.id) setSlotId(slot, id);
         settle(ids, true);
       }
       setReviewing(false);
@@ -267,7 +277,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
     } finally {
       setBusy(false);
     }
-  }, [settle, stateRef]);
+  }, [settle, setSlotId, stateRef]);
 
   /** Really deletes photos from the phone. The system asks her to confirm, once per batch. */
   const emptyBin = useCallback(
@@ -318,28 +328,54 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   const trashCount = store.pending.filter((d) => d.action.type === 'trash').length;
   const toSave = counts.reduce((a, b) => a + b, 0);
 
-  const albumNames = store.slots;
   const tileH = design === 2 ? 60 : 68;
   const cell = (slot: number) => {
-    if (slot < albumNames.length) {
-      return (
-        <Tile
-          key={slot}
-          slot={slot}
-          name={albumNames[slot]}
-          count={counts[slot]}
-          hoverSlot={hoverSlot}
-          onPress={() => topCard.current?.send({ type: 'album', slot })}
-          onLongPress={() => setEditing(slot)}
-          height={tileH}
-        />
-      );
+    const album = slots[slot];
+    if (!album) {
+      return <EmptySpot key={slot} slot={slot} height={tileH} onPress={() => setPicking(slot)} />;
     }
-    if (slot === albumNames.length && slot < MAX_ALBUMS) {
-      return <AddTile key={slot} height={tileH} onPress={() => setEditing('new')} />;
-    }
-    return <View key={slot} style={[styles.gap, { height: tileH }]} />;
+    return (
+      <Tile
+        key={slot}
+        slot={slot}
+        name={album.name}
+        count={counts[slot]}
+        hoverSlot={hoverSlot}
+        onPress={() => topCard.current?.send({ type: 'album', slot })}
+        onLongPress={() => setMenuSlot(slot)}
+        height={tileH}
+      />
+    );
   };
+
+  /** Fills the empty spots that are showing with her biggest albums that aren't placed yet. */
+  const autoFill = useCallback(async (): Promise<string> => {
+    let albums: DeviceAlbum[];
+    try {
+      albums = await library.listAlbums();
+    } catch {
+      return "Couldn't read the albums on this phone.";
+    }
+    const now = stateRef.current.slots;
+    const showing = now.slice(0, ROW_SIZE).every(Boolean) ? MAX_ALBUMS : ROW_SIZE;
+    const empty: number[] = [];
+    for (let i = 0; i < showing; i++) if (!now[i]) empty.push(i);
+    if (!empty.length) return 'There are no empty spots to fill.';
+    const taken = new Set<string>();
+    now.forEach((a) => {
+      if (a) {
+        if (a.id) taken.add(a.id);
+        taken.add(a.name.toLowerCase());
+      }
+    });
+    const candidates = albums.filter(
+      (a) => (a.count ?? 1) > 0 && !taken.has(a.id) && !taken.has(a.title.toLowerCase()),
+    );
+    const n = Math.min(empty.length, candidates.length);
+    for (let i = 0; i < n; i++) setSlot(empty[i], { name: candidates[i].title, id: candidates[i].id });
+    if (!n) return 'No other albums found on this phone.';
+    return `Filled ${n} ${n === 1 ? 'spot' : 'spots'}.`;
+  }, [setSlot, stateRef]);
 
   const row = (from: number) => (
     <View
@@ -355,11 +391,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
           : undefined
       }
     >
-      {from === 0 && albumNames.length === 0 ? (
-        <AddTile wide height={tileH} onPress={() => setEditing('new')} />
-      ) : (
-        [0, 1, 2, 3].map((i) => cell(from + i))
-      )}
+      {[0, 1, 2, 3].map((i) => cell(from + i))}
     </View>
   );
 
@@ -535,12 +567,16 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
       </View>
       <Text style={styles.hint}>
         Swipe left for next · right to go back · flick up or pinch to trash{'\n'}
-        {albumNames.length ? (design === 2 ? 'Drag down to an album · ' : 'Drag to an album · ') : ''}
+        {filledMask
+          ? design === 2
+            ? 'Drag down to an album · '
+            : 'Drag to an album · '
+          : 'Tap a + to choose an album · '}
         Double-tap to favorite ♥
       </Text>
 
       {design === 1 ? (
-        albumNames.length >= ROW_SIZE && row(ROW_SIZE)
+        rowBVisible && row(ROW_SIZE)
       ) : (
         <View
           // Both rows as one block: it changes size when the second row appears, so its
@@ -549,31 +585,58 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
             const { y } = e.nativeEvent.layout;
             rowRects.current.a = { y, h: tileH };
             rowRects.current.b =
-              albumCount >= ROW_SIZE ? { y: y + tileH + ROW_GAP, h: tileH } : undefined;
+              rowBVisible ? { y: y + tileH + ROW_GAP, h: tileH } : undefined;
             applyZones();
           }}
         >
           {row(0)}
-          {albumNames.length >= ROW_SIZE && row(ROW_SIZE)}
+          {rowBVisible && row(ROW_SIZE)}
         </View>
       )}
 
-      <RenameSheet
-        visible={editing !== null}
-        title={editing === 'new' ? 'New album' : 'Album name'}
-        name={typeof editing === 'number' ? (albumNames[editing] ?? '') : ''}
-        onClose={() => setEditing(null)}
-        onSave={(name) => {
-          if (editing === 'new') store.addSlot(name);
-          else if (typeof editing === 'number') store.renameSlot(editing, name);
-          setEditing(null);
+      <AlbumPicker
+        visible={picking !== null}
+        used={slots.filter((a, i): a is AlbumRef => !!a && i !== picking)}
+        onPick={(album) => {
+          if (picking !== null) setSlot(picking, { name: album.title, id: album.id });
+          setPicking(null);
         }}
+        onNew={() => {
+          setNaming(picking);
+          setPicking(null);
+        }}
+        onClose={() => setPicking(null)}
+      />
+      <RenameSheet
+        visible={naming !== null}
+        title="New album"
+        name=""
+        onClose={() => setNaming(null)}
+        onSave={(name) => {
+          if (naming !== null) setSlot(naming, { name });
+          setNaming(null);
+        }}
+      />
+      <SlotMenu
+        visible={menuSlot !== null}
+        name={menuSlot !== null ? (slots[menuSlot]?.name ?? '') : ''}
+        locked={menuSlot !== null && counts[menuSlot] > 0}
+        onChange={() => {
+          setPicking(menuSlot);
+          setMenuSlot(null);
+        }}
+        onRemove={() => {
+          if (menuSlot !== null) setSlot(menuSlot, null);
+          setMenuSlot(null);
+        }}
+        onClose={() => setMenuSlot(null)}
       />
       <OptionsSheet
         visible={optionsOpen}
         design={design}
         info={buildInfo()}
         onPick={store.setDesign}
+        onAutoFill={autoFill}
         onClose={() => setOptionsOpen(false)}
       />
       <ReviewSheet
@@ -633,7 +696,7 @@ function Tile({
         onLongPress={onLongPress}
         accessibilityRole="button"
         accessibilityLabel={`${name} album`}
-        accessibilityHint="Adds this photo. Hold to rename."
+        accessibilityHint="Adds this photo. Hold to change or remove."
         testID={`tile-${slot}`}
       >
         <Animated.Text
@@ -654,25 +717,25 @@ function Tile({
   );
 }
 
-function AddTile({
-  onPress,
-  wide,
+/** An empty album spot: a dotted outline with a plus. Tap to pick or create an album for it. */
+function EmptySpot({
+  slot,
   height,
+  onPress,
 }: {
-  onPress: () => void;
-  wide?: boolean;
+  slot: number;
   height: number;
+  onPress: () => void;
 }) {
   return (
     <Pressable
-      style={[styles.addTile, { height }, wide && styles.addWide]}
+      style={[styles.addTile, { height }]}
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel="Add album"
-      testID="add-album"
+      accessibilityLabel="Empty album spot. Choose an album."
+      testID={`slot-${slot}`}
     >
       <Text style={styles.addPlus}>＋</Text>
-      <Text style={styles.addText}>Add album</Text>
     </Pressable>
   );
 }
@@ -711,7 +774,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#22252E',
   },
   iconText: { color: '#F2F3F5', fontSize: 18 },
-  gap: { flex: 1, height: 68, marginHorizontal: 4 },
   addTile: {
     flex: 1,
     height: 68,
@@ -723,9 +785,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  addWide: { flexDirection: 'row', gap: 10 },
-  addPlus: { color: '#C5C9D2', fontSize: 20, fontWeight: '600' },
-  addText: { color: '#C5C9D2', fontSize: 13, fontWeight: '600' },
+  addPlus: { color: '#8A90A0', fontSize: 26, fontWeight: '300' },
   tile: {
     flex: 1,
     height: 68,

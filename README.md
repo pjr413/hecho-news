@@ -4,11 +4,13 @@ A small phone app for clearing out a photo library one picture at a time.
 
 - **Swipe left** – next photo in the timeline (newest first); **swipe right** – go back
 - **Flick up**, or **pinch two fingers together** – move the photo to the trash bin
-- **Add album** – there are no albums at first, just an Add album button. Add up to
-  eight: four along the top, then four more along the bottom
-- **Drag onto an album** – file the photo there (tap an album to do the same;
-  hold it to rename)
-- **Options** (the gear at the top) – switch between Version 1 (albums along the top and
+- **Album spots** – along the top there are four empty dotted spots. Tap a **+** to pick
+  one of the albums already on the phone (biggest first), or make a new one. Fill all four
+  and a second row of four appears, up to eight in all
+- **Drag onto an album** – file the photo there (tap an album to do the same). Hold an
+  album to change it or empty the spot (not while photos are waiting to be saved to it)
+- **Options** (the gear at the top) – **Fill empty spots with my albums** (uses the albums
+  with the most photos first), and switch between Version 1 (albums along the top and
   bottom) and Version 2 (all albums in two rows across the bottom); also shows which
   build of the app is running
 - **Double-tap** – favorite (the phone's real Favorites)

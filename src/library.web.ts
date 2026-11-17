@@ -1,6 +1,6 @@
 // Browser preview: there is no photo library on the web, so this serves
 // generated sample pictures and keeps every change in memory.
-import type { Access, Photo } from './types';
+import type { Access, AlbumRef, DeviceAlbum, Photo } from './types';
 
 export const isDemo = true;
 
@@ -41,7 +41,22 @@ export async function fetchPage(offset: number, limit: number): Promise<Photo[]>
 
 export async function setFavorite(_id: string, _value: boolean): Promise<void> {}
 
-export async function fileIntoAlbum(_name: string, _ids: string[]): Promise<void> {}
+const SAMPLE_ALBUMS: DeviceAlbum[] = [
+  { id: 'demo-a1', title: 'Family', count: 412 },
+  { id: 'demo-a2', title: 'Vacation 2024', count: 268 },
+  { id: 'demo-a3', title: 'Pets', count: 190 },
+  { id: 'demo-a4', title: 'Recipes', count: 87 },
+  { id: 'demo-a5', title: 'Kids', count: 64 },
+  { id: 'demo-a6', title: 'Garden', count: 31 },
+];
+
+export async function listAlbums(): Promise<DeviceAlbum[]> {
+  return SAMPLE_ALBUMS;
+}
+
+export async function fileIntoAlbum(album: AlbumRef, _ids: string[]): Promise<string> {
+  return album.id ?? `demo-${album.name.toLowerCase()}`;
+}
 
 export async function deletePhotos(ids: string[]): Promise<void> {
   photos = photos.filter((p) => !ids.includes(p.id));

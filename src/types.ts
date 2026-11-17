@@ -4,6 +4,12 @@ export type Photo = {
   favorite: boolean;
 };
 
+/** An album in one of the spots. `id` is the phone's own id once known; a brand-new album has only a name until it's created on Save. */
+export type AlbumRef = { name: string; id?: string };
+
+/** An album that already exists on the phone, for the picker. */
+export type DeviceAlbum = { id: string; title: string; count?: number };
+
 export type Access = 'all' | 'limited' | 'none';
 
 /** What can be decided about a photo. */
