@@ -396,18 +396,20 @@ export function AlbumPicker({
 export function SlotMenu({
   visible,
   name,
-  locked,
+  waiting,
   onChange,
   onRemove,
   onClose,
 }: {
   visible: boolean;
   name: string;
-  locked: boolean;
+  /** How many photos are waiting to be saved into this album. */
+  waiting: number;
   onChange: () => void;
   onRemove: () => void;
   onClose: () => void;
 }) {
+  const photos = `${waiting} ${waiting === 1 ? 'photo' : 'photos'}`;
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={[styles.backdrop, styles.bottom]}>
@@ -416,22 +418,23 @@ export function SlotMenu({
             {name}
           </Text>
           <Text style={styles.body}>
-            {locked
-              ? 'Photos are waiting to be saved to this album. Tap Save first, then you can remove or change it.'
+            {waiting > 0
+              ? `${photos} ${waiting === 1 ? 'is' : 'are'} waiting to be saved to this album. If you remove it, ${waiting === 1 ? 'that photo goes' : 'they go'} back to your photos to sort again. The album and its photos stay on your phone, and nothing is deleted.`
               : 'Removing it only takes it out of Photo Sorter. The album and its photos stay on your phone, and nothing is deleted.'}
           </Text>
           <Pressable
-            style={[styles.menuButton, styles.danger, locked && styles.dim]}
-            disabled={locked}
+            style={[styles.menuButton, styles.danger]}
             onPress={onRemove}
             accessibilityRole="button"
             testID="remove-album"
           >
-            <Text style={styles.buttonText}>Remove from Photo Sorter</Text>
+            <Text style={styles.buttonText}>
+              {waiting > 0 ? `Remove and put ${photos} back` : 'Remove from Photo Sorter'}
+            </Text>
           </Pressable>
           <Pressable
-            style={[styles.menuButton, locked && styles.dim]}
-            disabled={locked}
+            style={[styles.menuButton, waiting > 0 && styles.dim]}
+            disabled={waiting > 0}
             onPress={onChange}
             accessibilityRole="button"
             testID="change-album"

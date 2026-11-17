@@ -9,7 +9,8 @@ A small phone app for clearing out a photo library one picture at a time.
   Options you choose how many rows you want, from one to four
 - **Drag onto an album** – file the photo there (tap an album to do the same). Hold an
   album for three seconds (a red fill shows the time) to remove it from Photo Sorter or change
-  it. Removing only takes it out of the app; the album and its photos stay on the phone
+  it. Removing only takes it out of the app; the album and its photos stay on the phone, and
+  any photos still waiting to be saved to it go back to your photos to sort again
 - **Options** (the gear at the top) – **Choose album types to create** (Family, Friends,
   Travel, Keepers, Kids, Pets, Food, Funny: tap one to put it in the next empty spot, tap
   again to take it out), **Fill empty spots with my albums** (uses the albums with the

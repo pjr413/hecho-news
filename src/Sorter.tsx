@@ -368,18 +368,32 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
     );
   };
 
+  /**
+   * Takes an album out of its spot. Photos that were waiting to be saved to it go back to the
+   * photos to sort; nothing is deleted and the real album is never touched. Returns how many.
+   */
+  const removeSlot = useCallback(
+    (slot: number): number => {
+      const waiting = stateRef.current.pending.filter(
+        (d) => d.action.type === 'album' && d.action.slot === slot,
+      );
+      waiting.forEach((d) => putBack(d.photo.id));
+      setSlot(slot, null);
+      return waiting.length;
+    },
+    [putBack, setSlot, stateRef],
+  );
+
   /** Adds (or, if it's already there, removes) one of the ready-made album types. */
   const toggleType = useCallback(
     async (name: string): Promise<string> => {
       const same = (a: AlbumRef | null) => !!a && a.name.toLowerCase() === name.toLowerCase();
       const at = stateRef.current.slots.findIndex(same);
       if (at >= 0) {
-        const waiting = stateRef.current.pending.some(
-          (d) => d.action.type === 'album' && d.action.slot === at,
-        );
-        if (waiting) return `Photos are waiting to be saved to ${name}. Tap Save first.`;
-        setSlot(at, null);
-        return `Took ${name} out.`;
+        const back = removeSlot(at);
+        return back
+          ? `Took ${name} out and put ${back} ${back === 1 ? 'photo' : 'photos'} back.`
+          : `Took ${name} out.`;
       }
       const emptyShowing = () =>
         stateRef.current.slots.slice(0, layoutRef.current.rows * ROW_SIZE).findIndex((a) => !a);
@@ -403,7 +417,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         ? `Added ${name}. It uses the album you already have.`
         : `Added ${name}. It's created when you tap Save.`;
     },
-    [setSlot, stateRef],
+    [removeSlot, setSlot, stateRef],
   );
 
   /** Fills the empty spots that are showing with her biggest albums that aren't placed yet. */
@@ -674,13 +688,13 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
       <SlotMenu
         visible={menuSlot !== null}
         name={menuSlot !== null ? (slots[menuSlot]?.name ?? '') : ''}
-        locked={menuSlot !== null && counts[menuSlot] > 0}
+        waiting={menuSlot !== null ? counts[menuSlot] : 0}
         onChange={() => {
           setPicking(menuSlot);
           setMenuSlot(null);
         }}
         onRemove={() => {
-          if (menuSlot !== null) setSlot(menuSlot, null);
+          if (menuSlot !== null) removeSlot(menuSlot);
           setMenuSlot(null);
         }}
         onClose={() => setMenuSlot(null)}
