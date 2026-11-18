@@ -42,6 +42,8 @@ type Saved = {
   tourSeen: boolean;
   /** Has the games table been unlocked in Options? */
   gamesUnlocked: boolean;
+  /** Names (lower-case) of the albums used most recently, newest first. */
+  recent: string[];
   /** Show the oldest photos first instead of the newest. */
   oldestFirst: boolean;
   /** How many rows of album spots are showing (1 to MAX_ROWS). */
@@ -73,6 +75,7 @@ const EMPTY: Saved = {
   tourSeen: false,
   gamesUnlocked: false,
   oldestFirst: false,
+  recent: [],
   albumRows: 1,
 };
 
@@ -110,6 +113,7 @@ export function useStore() {
             tourSeen: saved.tourSeen === true || (saved.reviewed ?? []).length > 0 || waiting.length > 0,
             gamesUnlocked: saved.gamesUnlocked === true,
             oldestFirst: saved.oldestFirst === true,
+            recent: Array.isArray(saved.recent) ? saved.recent.filter((x) => typeof x === 'string').slice(0, 12) : [],
             // Never fewer rows than it takes to show the albums she already has.
             albumRows: Math.min(
               MAX_ROWS,
@@ -166,6 +170,26 @@ export function useStore() {
     setState((s) => ({ ...s, slots: s.slots.map((a, i) => (i === slot ? album : a)) }));
   }, []);
 
+  /** Moves one album to another place in the list of albums she has (empty spots stay where they are). */
+  const reorderAlbums = useCallback((from: number, to: number) => {
+    setState((s) => {
+      const places = s.slots.flatMap((a, i) => (a ? [i] : []));
+      const list = places.map((i) => s.slots[i]!);
+      if (from < 0 || from >= list.length || to < 0 || to >= list.length || from === to) return s;
+      const [moved] = list.splice(from, 1);
+      list.splice(to, 0, moved);
+      const slots = [...s.slots];
+      places.forEach((place, k) => (slots[place] = list[k]));
+      return { ...s, slots };
+    });
+  }, []);
+
+  /** Notes that an album was just used, so it's offered first next time. */
+  const noteRecent = useCallback((name: string) => {
+    const key = name.toLowerCase();
+    setState((s) => ({ ...s, recent: [key, ...s.recent.filter((r) => r !== key)].slice(0, 12) }));
+  }, []);
+
   /** Remembers the phone's id for an album once it exists, so later saves find it exactly. */
   const setSlotId = useCallback((slot: number, id: string) => {
     setState((s) => ({
@@ -209,7 +233,7 @@ export function useStore() {
     setState((s) => ({ ...s, retentionDays }));
   }, []);
 
-  return { ready, ...state, stateRef, push, takeBack, settle, markSeen, setSlot, setSlotId, setRetentionDays, setDesign, setAlbumRows, markFiled, addStat, noteStreak, setFlag };
+  return { ready, ...state, stateRef, push, takeBack, settle, markSeen, setSlot, setSlotId, reorderAlbums, noteRecent, setRetentionDays, setDesign, setAlbumRows, markFiled, addStat, noteStreak, setFlag };
 }
 
 export type Store = ReturnType<typeof useStore>;

@@ -14,7 +14,16 @@ import {
   type PermissionResponse,
 } from 'expo-media-library';
 
-import { findBursts, type Access, type AlbumRef, type DeviceAlbum, type Filter, type Photo } from './types';
+import {
+  findBursts,
+  findDuplicates,
+  type Access,
+  type AlbumRef,
+  type DeviceAlbum,
+  type Filter,
+  type Photo,
+  type View,
+} from './types';
 
 export const isDemo = false;
 
@@ -25,8 +34,13 @@ export const isDemo = false;
  */
 export const advancedQueries = true;
 
-/** The screenshots filter uses a different kind of query again; it is on. */
 export const screenshotFilter = true;
+
+/**
+ * Views that aren't offered yet. Each one needs a kind of query that hasn't been tried on a real
+ * iPhone, so they are switched on one at a time, in separate updates.
+ */
+export const hiddenViews: View[] = ['live', 'panoramas', 'big'];
 
 function toAccess(res: PermissionResponse): Access {
   if (!res.granted) return 'none';
@@ -90,7 +104,19 @@ async function buildQuery(filter: Filter, range: Range = {}): Promise<Query | nu
   let q = new Query();
   if (filter === 'photos') q = q.eq(AssetField.MEDIA_TYPE, MediaType.IMAGE);
   else if (filter === 'videos') q = q.eq(AssetField.MEDIA_TYPE, MediaType.VIDEO);
-  else if (filter === 'screenshots') {
+  else if (filter === 'live' || filter === 'panoramas') {
+    if (Platform.OS !== 'ios' || hiddenViews.includes(filter)) return null;
+    q = q
+      .eq(AssetField.MEDIA_TYPE, MediaType.IMAGE)
+      .contains(AssetField.MEDIA_SUBTYPES, filter === 'live' ? MediaSubtype.LIVE_PHOTO : MediaSubtype.PANORAMA);
+  } else if (filter === 'big') {
+    // The biggest files are nearly always long videos: longest first.
+    if (hiddenViews.includes('big')) return null;
+    q = q.eq(AssetField.MEDIA_TYPE, MediaType.VIDEO);
+    if (before !== undefined) q = q.lte(AssetField.CREATION_TIME, await fromMs(before));
+    if (after !== undefined) q = q.gte(AssetField.CREATION_TIME, await fromMs(after));
+    return q.orderBy({ key: AssetField.DURATION, ascending: false });
+  } else if (filter === 'screenshots') {
     if (!screenshotFilter) return null;
     q = q.eq(AssetField.MEDIA_TYPE, MediaType.IMAGE);
     if (Platform.OS === 'ios') {
@@ -136,12 +162,22 @@ export async function dateRange(): Promise<{ oldest: number; newest: number } | 
 }
 
 /** Photos that look like repeats: shots taken seconds apart at the same size. */
-export async function burstPhotos(opts: Range = {}): Promise<Photo[]> {
+async function wholeLibrary(opts: Range): Promise<Photo[]> {
   if (!advancedQueries) return [];
   const q = await buildQuery('photos', opts);
   if (!q) return [];
   const rows = await q.limit(4000).exeForMetadata();
-  return findBursts(rows.map(toPhoto));
+  return rows.map(toPhoto);
+}
+
+/** Near-identical shots taken seconds apart. */
+export async function burstPhotos(opts: Range = {}): Promise<Photo[]> {
+  return findBursts(await wholeLibrary(opts));
+}
+
+/** The very same shot saved more than once. */
+export async function duplicatePhotos(opts: Range = {}): Promise<Photo[]> {
+  return findDuplicates(await wholeLibrary(opts));
 }
 
 /** A file the video player can open. */

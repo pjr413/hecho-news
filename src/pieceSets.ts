@@ -61,3 +61,19 @@ export const PIECE_SETS: PieceSet[] = [
 export const PIECE_SET_BY_ID: Record<PieceSetId, PieceSet> = Object.fromEntries(
   PIECE_SETS.map((s) => [s.id, s]),
 ) as Record<PieceSetId, PieceSet>;
+
+export type BoardThemeId = 'green' | 'wood' | 'blue' | 'gray' | 'pink' | 'night';
+
+/** Square colors for the board. */
+export const BOARD_THEMES: { id: BoardThemeId; name: string; light: string; dark: string }[] = [
+  { id: 'green', name: 'Green', light: '#EEEED2', dark: '#769656' },
+  { id: 'wood', name: 'Wood', light: '#F0D9B5', dark: '#B58863' },
+  { id: 'blue', name: 'Blue', light: '#DEE3E6', dark: '#8CA2AD' },
+  { id: 'gray', name: 'Gray', light: '#E4E4E4', dark: '#8A8A8A' },
+  { id: 'pink', name: 'Pink', light: '#FBE4EC', dark: '#E08AA8' },
+  { id: 'night', name: 'Night', light: '#6B7089', dark: '#3A3E54' },
+];
+
+export const BOARD_THEME_BY_ID: Record<BoardThemeId, (typeof BOARD_THEMES)[number]> = Object.fromEntries(
+  BOARD_THEMES.map((b) => [b.id, b]),
+) as Record<BoardThemeId, (typeof BOARD_THEMES)[number]>;

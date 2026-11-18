@@ -14,7 +14,9 @@ import {
   type Facing,
   type GameInfo,
 } from './ChessBoard';
-import { PIECE_SETS, type PieceSetId } from './pieceSets';
+import { BOARD_THEMES, PIECE_SETS, type BoardThemeId, type PieceSetId } from './pieceSets';
+import { PastGames, Replay, type FinishedGame } from './Replay';
+import { playSound } from './sounds';
 import { allowSleep, keepAwake } from './keepAwake';
 
 type Mode = 'match' | 'turn';
@@ -24,6 +26,12 @@ type Bonus = 'none' | 'increment' | 'delay' | 'bronstein';
 type Settings = {
   /** Chess game: which set of pieces to draw. */
   pieceSet: PieceSetId;
+  /** Chess game: colors of the board squares. */
+  boardTheme: BoardThemeId;
+  /** Chess game: how many moves each player may take back in a game (-1 for no limit). */
+  undoLimit: number;
+  /** Chess game: little sounds for moves, captures and checks. */
+  sound: boolean;
   /** Chess game: black sits at the bottom of the screen instead of white. */
   blackAtBottom: boolean;
   /** Chess game: show where a picked piece can move. */
@@ -42,8 +50,19 @@ type Settings = {
 
 const KEY = 'photo-sorter/chess-timer/v1';
 const GAME_KEY = 'photo-sorter/chess-game/v1';
+const HISTORY_KEY = 'photo-sorter/chess-history/v1';
+const UNDO_CHOICES = [
+  { value: -1, label: 'No limit' },
+  { value: 0, label: 'None' },
+  { value: 1, label: '1' },
+  { value: 3, label: '3' },
+  { value: 5, label: '5' },
+];
 const DEFAULTS: Settings = {
   pieceSet: 'classic',
+  boardTheme: 'green',
+  undoLimit: -1,
+  sound: true,
   blackAtBottom: false,
   moveHints: true,
   pieceFacing: 'each',
@@ -177,7 +196,14 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
   const [first, setFirst] = useState<Player>(0);
   const [ms, setMs] = useState<[number, number]>([initialMs(DEFAULTS), initialMs(DEFAULTS)]);
   const [loser, setLoser] = useState<Player | null>(null);
-  const [panel, setPanel] = useState<null | 'options' | 'confirm' | 'resume'>(null);
+  const [panel, setPanel] = useState<null | 'options' | 'confirm' | 'resume' | 'history'>(null);
+  /** Finished games, newest first, and the one being replayed. */
+  const [history, setHistory] = useState<FinishedGame[]>([]);
+  const [replaying, setReplaying] = useState<FinishedGame | null>(null);
+  /** How many moves each player has taken back this game. */
+  const [undos, setUndos] = useState<[number, number]>([0, 0]);
+  const recordedRef = useRef(false);
+  const lastMovesRef = useRef(0);
   const [info, setInfo] = useState<GameInfo>(START_INFO);
   /** Bumped to start a fresh game on the board. */
   const [resetKey, setResetKey] = useState(0);
@@ -231,6 +257,9 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
           turnSec: clampValue('turn', Number(saved.turnSec) || DEFAULTS.turnSec),
           carryOver: saved.carryOver === true,
           moveHints: saved.moveHints !== false,
+          boardTheme: BOARD_THEMES.some((x) => x.id === saved.boardTheme) ? (saved.boardTheme as BoardThemeId) : 'green',
+          undoLimit: UNDO_CHOICES.some((x) => x.value === saved.undoLimit) ? (saved.undoLimit as number) : -1,
+          sound: saved.sound !== false,
           blackAtBottom: saved.blackAtBottom === true,
           pieceSet: PIECE_SETS.some((x) => x.id === saved.pieceSet)
             ? (saved.pieceSet as PieceSetId)
@@ -365,6 +394,14 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
   const onGameInfo = (next: GameInfo) => {
     setInfo(next);
     pgnRef.current = boardRef.current?.pgn() ?? pgnRef.current;
+    // Little sounds: a move, a capture, a check, or the game ending.
+    if (settings.sound && next.moveCount > lastMovesRef.current) {
+      {
+        const lastSan = next.san[next.san.length - 1] ?? '';
+        playSound(next.over ? 'end' : lastSan.includes('+') ? 'check' : lastSan.includes('x') ? 'capture' : 'move');
+      }
+    }
+    lastMovesRef.current = next.moveCount;
     if (!next.over) return;
     setPhase('over');
     // The side to move has been checkmated.
@@ -374,6 +411,8 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
 
   /** A move was taken back: the player who made it is to move again. */
   const onGameUndo = (mover: Color) => {
+    const who = playerOf(mover);
+    setUndos((u) => (who === 0 ? [u[0] + 1, u[1]] : [u[0], u[1] + 1]));
     setDrawOffer(null);
     setResignArm(null);
     if (phase === 'over' && info.over) {
@@ -384,7 +423,11 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
     setActive(playerOf(mover));
   };
 
-  const canUndo = game && info.moveCount > 0 && !ending && (phase !== 'over' || !!info.over);
+  // Taking back a move counts against the player who made it (the one not to move now).
+  const undoWho: Player = playerOf(info.turn === 'w' ? 'b' : 'w');
+  const undoLeft = settings.undoLimit < 0 ? Infinity : Math.max(0, settings.undoLimit - undos[undoWho]);
+  const canUndo =
+    game && info.moveCount > 0 && !ending && (phase !== 'over' || !!info.over) && undoLeft > 0;
 
   /** Tap Resign twice (the second tap within three seconds) to give up. */
   const resign = (player: Player) => {
@@ -409,6 +452,57 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
     setPhase('over');
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
   };
+
+  // Finished games are kept so they can be replayed later.
+  useEffect(() => {
+    if (!game) return;
+    AsyncStorage.getItem(HISTORY_KEY)
+      .then((raw) => {
+        const list = raw ? (JSON.parse(raw) as FinishedGame[]) : [];
+        if (Array.isArray(list)) setHistory(list.filter((g) => typeof g?.pgn === 'string'));
+      })
+      .catch(() => {});
+  }, [game]);
+  useEffect(() => {
+    if (!game || phase !== 'over' || recordedRef.current || info.moveCount === 0) return;
+    const pgn = pgnRef.current;
+    if (!pgn) return;
+    const name = (c: Color) => (c === 'w' ? 'White' : 'Black');
+    let result: string;
+    if (info.over) {
+      result =
+        info.over.kind === 'checkmate'
+          ? `${name(info.turn === 'w' ? 'b' : 'w')} won by checkmate`
+          : `Draw: ${info.over.reason}`;
+    } else if (ending?.kind === 'agreed') {
+      result = 'Draw agreed';
+    } else if (ending?.kind === 'resign') {
+      result = `${name(colorOf(ending.loser === 0 ? 1 : 0))} won, ${name(colorOf(ending.loser))} resigned`;
+    } else if (loser !== null) {
+      result = `${name(colorOf(loser === 0 ? 1 : 0))} won on time`;
+    } else {
+      return;
+    }
+    recordedRef.current = true;
+    const entry: FinishedGame = {
+      id: String(Date.now()),
+      pgn,
+      date: Date.now(),
+      result,
+      moves: info.moveCount,
+    };
+    setHistory((h) => {
+      const next = [entry, ...h].slice(0, 30);
+      AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(next)).catch(() => {});
+      return next;
+    });
+  }, [game, phase, info, ending, loser]); // eslint-disable-line react-hooks/exhaustive-deps
+  const deleteHistory = (id: string) =>
+    setHistory((h) => {
+      const next = h.filter((g) => g.id !== id);
+      AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(next)).catch(() => {});
+      return next;
+    });
 
   // Keep a game in progress, so leaving the screen (or the app) doesn't lose it.
   const latest = useRef({ ms, active, info, phase, ending, blackAtBottom: settings.blackAtBottom });
@@ -541,6 +635,8 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
     setActive(first);
     setMs([init, init]);
     setResetKey((k) => k + 1);
+    setUndos([0, 0]);
+    recordedRef.current = false;
     setInfo(START_INFO);
     setEnding(null);
     setDrawOffer(null);
@@ -808,7 +904,11 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
           testID: 'timer-pause',
         })}
         {game &&
-          button('↶ Undo', () => boardRef.current?.undo(), { disabled: !canUndo, testID: 'timer-undo' })}
+          button(
+            undoLeft === Infinity ? '↶ Undo' : `↶ Undo (${undoLeft})`,
+            () => boardRef.current?.undo(),
+            { disabled: !canUndo, testID: 'timer-undo' },
+          )}
         {button('■ Reset', () => openPanel('confirm'), { disabled: phase === 'idle' && !(game && info.moveCount > 0), testID: 'timer-reset' })}
       </View>
     </View>
@@ -827,6 +927,7 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
               facing={settings.pieceFacing}
               hints={settings.moveHints}
               set={settings.pieceSet}
+              boardTheme={settings.boardTheme}
               flipped={settings.blackAtBottom}
               resetKey={resetKey}
               onMove={onGameMove}
@@ -853,6 +954,22 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
         </>
       )}
 
+      {panel === 'history' && !replaying && (
+        <PastGames
+          games={history}
+          onOpen={setReplaying}
+          onDelete={deleteHistory}
+          onClose={() => setPanel('options')}
+        />
+      )}
+      {replaying && (
+        <Replay
+          game={replaying}
+          pieceSet={settings.pieceSet}
+          theme={settings.boardTheme}
+          onClose={() => setReplaying(null)}
+        />
+      )}
       {panel === 'resume' && saved && (
         <View style={styles.overlay}>
           <View style={styles.card}>
@@ -965,6 +1082,72 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
                   <Text style={styles.cardBody} testID="set-blurb">
                     {PIECE_SETS.find((x) => x.id === settings.pieceSet)?.blurb}
                   </Text>
+                  <Text style={styles.sectionLabel}>Board colors</Text>
+                  <View style={styles.chips}>
+                    {BOARD_THEMES.map((b) => (
+                      <Pressable
+                        key={b.id}
+                        style={[styles.chip, { flexDirection: 'row' }, settings.boardTheme === b.id && styles.segmentOn]}
+                        onPress={() => saveSettings({ ...settings, boardTheme: b.id })}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: settings.boardTheme === b.id }}
+                        testID={`board-${b.id}`}
+                      >
+                        <View style={styles.swatch}>
+                          <View style={[styles.swatchHalf, { backgroundColor: b.light }]} />
+                          <View style={[styles.swatchHalf, { backgroundColor: b.dark }]} />
+                        </View>
+                        <Text style={[styles.segmentText, settings.boardTheme === b.id && styles.segmentTextOn]}>
+                          {b.name}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  <Text style={styles.sectionLabel}>Sounds</Text>
+                  <View style={styles.segment}>
+                    {[true, false].map((on) => (
+                      <Pressable
+                        key={String(on)}
+                        style={[styles.segmentItem, settings.sound === on && styles.segmentOn]}
+                        onPress={() => saveSettings({ ...settings, sound: on })}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: settings.sound === on }}
+                        testID={on ? 'sound-on' : 'sound-off'}
+                      >
+                        <Text style={[styles.segmentText, settings.sound === on && styles.segmentTextOn]}>
+                          {on ? 'On' : 'Off'}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  <Text style={styles.sectionLabel}>Takebacks each</Text>
+                  <View style={styles.chips}>
+                    {UNDO_CHOICES.map((u) => (
+                      <Pressable
+                        key={u.value}
+                        disabled={locked}
+                        style={[styles.chip, settings.undoLimit === u.value && styles.segmentOn, locked && styles.dim]}
+                        onPress={() => saveSettings({ ...settings, undoLimit: u.value })}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: settings.undoLimit === u.value }}
+                        testID={`undo-${u.value}`}
+                      >
+                        <Text style={[styles.segmentText, settings.undoLimit === u.value && styles.segmentTextOn]}>
+                          {u.label}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  <Text style={styles.cardBody}>
+                    How many moves each player may take back in a game. Change it before the game starts.
+                  </Text>
+                  <Pressable
+                    style={styles.stackButton}
+                    onPress={() => setPanel('history')}
+                    testID="open-history"
+                  >
+                    <Text style={styles.controlText}>Past games ({history.length})</Text>
+                  </Pressable>
                   <Text style={styles.sectionLabel}>Seats</Text>
                   <View style={styles.segment}>
                     {[false, true].map((blackBottom) => {
@@ -1327,6 +1510,8 @@ const styles = StyleSheet.create({
   cardTall: { maxHeight: '100%' },
   cardScroll: { flexShrink: 1 },
   cardScrollBody: { gap: 14 },
+  swatch: { flexDirection: 'row', width: 22, height: 12, borderRadius: 3, overflow: 'hidden', marginRight: 6 },
+  swatchHalf: { flex: 1 },
   sectionLabel: { color: '#F2F3F5', fontSize: 15, fontWeight: '700', marginTop: 4 },
   cardTitle: { color: '#F2F3F5', fontSize: 20, fontWeight: '700' },
   cardBody: { color: '#A9AEB8', fontSize: 14, lineHeight: 20 },

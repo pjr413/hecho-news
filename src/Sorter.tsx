@@ -20,11 +20,14 @@ import { onShake } from './shake';
 import { Tour } from './Tour';
 import { VideoPlayerSheet, canPlayVideo } from './VideoPlayer';
 import { ChessTimer } from './ChessTimer';
+import { CompareSheet } from './Compare';
+import { ReorderScreen } from './Reorder';
 import { GamesTable, MemoryGame } from './Games';
 import { AlbumPicker, AlbumView, BinSheet, JumpSheet, OptionsSheet, RenameSheet } from './Sheets';
 import type { Store } from './store';
 import {
   DAY_MS,
+  groupAround,
   MAX_ROWS,
   ROW_SIZE,
   rowsNeeded,
@@ -44,7 +47,11 @@ const VIEW_NAMES: Record<MediaView, string> = {
   photos: 'Photos',
   videos: 'Videos',
   screenshots: 'Screenshots',
+  live: 'Live Photos',
+  panoramas: 'Panoramas',
+  big: 'Big files',
   bursts: 'Bursts',
+  duplicates: 'Duplicates',
 };
 const LOW_WATER = 8;
 /** Space between the two album rows in Version 2 (matches `rowBelow` below). */
@@ -85,6 +92,9 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   const [jumpOpen, setJumpOpen] = useState(false);
   const [tourOpen, setTourOpen] = useState(false);
   const [playing, setPlaying] = useState<Photo | null>(null);
+  /** Photos shown side by side in "Keep which?". */
+  const [comparing, setComparing] = useState<Photo[]>([]);
+  const [reorderOpen, setReorderOpen] = useState(false);
   /** The album spot being filled from the picker, or null. */
   const [picking, setPicking] = useState<number | null>(null);
   /** The spot getting a brand-new album (asking for its name), or null. */
@@ -104,7 +114,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   photosRef.current = photos;
   const indexRef = useRef(index);
   indexRef.current = index;
-  const { push, takeBack, settle, markSeen, markFiled, setSlot, setSlotId, addStat, noteStreak, stateRef } =
+  const { push, takeBack, settle, markSeen, markFiled, setSlot, setSlotId, noteRecent, addStat, noteStreak, stateRef } =
     store;
   const offsetRef = useRef(0);
   const loadingRef = useRef(false);
@@ -213,9 +223,9 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
       const oldestFirst = oldestRef.current;
       const monthStart = end === undefined ? undefined : new Date(new Date(end + 1).getFullYear(), new Date(end + 1).getMonth() - 1, 1).getTime();
       const range = oldestFirst ? { after: monthStart, oldestFirst } : { before: end, oldestFirst };
-      if (viewRef.current === 'bursts') {
-        // Near-duplicates are found by looking at the whole library at once.
-        const list = await library.burstPhotos(range);
+      if (viewRef.current === 'bursts' || viewRef.current === 'duplicates') {
+        // Repeats are found by looking at the whole library at once.
+        const list = await (viewRef.current === 'bursts' ? library.burstPhotos(range) : library.duplicatePhotos(range));
         if (token !== viewToken.current) return;
         setExhausted(true);
         setPhotos((q) => [...q, ...list.filter((p) => !known.has(p.id))]);
@@ -398,6 +408,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         try {
           const id = await library.fileIntoAlbum(target, [photo.id]);
           markFiled(photo.id, { name: chosen.name, id });
+          noteRecent(chosen.name);
           if (!target.id && stateRef.current.slots[slot]?.name === chosen.name) setSlotId(slot, id);
         } catch {
           putBack(photo.id);
@@ -405,7 +416,27 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         }
       });
     },
-    [push, markSeen, markFiled, setSlotId, enqueue, putBack, noteProgress, stateRef],
+    [push, markSeen, markFiled, setSlotId, enqueue, putBack, noteProgress, noteRecent, stateRef],
+  );
+
+  /** "Keep which?": keep one of the compared photos and send the others to the bin. */
+  const keepOnly = useCallback(
+    (keep: Photo) => {
+      const group = comparing;
+      const ids = new Set(group.map((p) => p.id));
+      const first = Math.max(0, photosRef.current.findIndex((p) => ids.has(p.id)));
+      markSeen(keep.id);
+      group.filter((p) => p.id !== keep.id).forEach((p) => {
+        push(p, { type: 'trash' });
+        noteProgress('trashed');
+      });
+      setPhotos((q) => q.filter((p) => !ids.has(p.id)));
+      setIndex(first);
+      setComparing([]);
+      buzz('thud');
+      setStatus(`Kept one, ${group.length - 1} moved to the bin`);
+    },
+    [comparing, markSeen, push, noteProgress],
   );
 
   /** Undo the latest choice. A photo already filed is taken back out of its album first. */
@@ -820,6 +851,16 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         <Pressable
           style={[styles.action, !hasNext && styles.dim]}
           disabled={!hasNext}
+          onPress={() => setComparing(groupAround(photosRef.current, index, view))}
+          accessibilityRole="button"
+          accessibilityLabel="Compare with the next photo or its burst"
+          testID="compare"
+        >
+          <Text style={styles.actionText}>⇄</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.action, !hasNext && styles.dim]}
+          disabled={!hasNext}
           onPress={() => topCard.current?.send({ type: 'next' })}
           accessibilityRole="button"
           accessibilityLabel="Next photo"
@@ -854,8 +895,12 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
       <AlbumPicker
         visible={picking !== null}
         used={slots.filter((a, i): a is AlbumRef => !!a && i !== picking)}
+        recent={store.recent}
         onPick={(album) => {
-          if (picking !== null) setSlot(picking, { name: album.title, id: album.id });
+          if (picking !== null) {
+            setSlot(picking, { name: album.title, id: album.id });
+            store.noteRecent(album.title);
+          }
           setPicking(null);
         }}
         onNew={() => {
@@ -875,6 +920,21 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
       {night && <View style={styles.nightDim} pointerEvents="none" testID="night-dim" />}
       <BinPeek visible={binPeek} count={trashCount} onClose={() => setBinPeek(false)} />
       <StatsSheet visible={statsOpen} stats={store.stats} onClose={() => setStatsOpen(false)} />
+      {reorderOpen && (
+        <ReorderScreen
+          items={slots.flatMap((a, i) =>
+            a ? [{ name: a.name, color: slotColor(i), emoji: emojiFor(a.name) }] : [],
+          )}
+          onMove={store.reorderAlbums}
+          onClose={() => setReorderOpen(false)}
+        />
+      )}
+      <CompareSheet
+        photos={comparing}
+        onKeep={keepOnly}
+        onKeepAll={() => setComparing([])}
+        onClose={() => setComparing([])}
+      />
       <JumpSheet
         visible={jumpOpen}
         onPick={(before, label) => {
@@ -940,7 +1000,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
           store.setFlag('oldestFirst', oldest);
         }}
         advanced={library.advancedQueries}
-        screenshots={library.screenshotFilter}
+        hiddenViews={library.hiddenViews}
         jumpLabel={jump?.label ?? null}
         onOpenJump={() => {
           setOptionsOpen(false);
@@ -949,6 +1009,11 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         onClearJump={() => {
           setOptionsOpen(false);
           applyView(viewRef.current, null);
+        }}
+        canReorder={slots.filter(Boolean).length >= 2}
+        onReorder={() => {
+          setOptionsOpen(false);
+          setTimeout(() => setReorderOpen(true), 350);
         }}
         onShowTour={() => {
           setOptionsOpen(false);

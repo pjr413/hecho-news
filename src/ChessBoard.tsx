@@ -5,7 +5,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
 import { scheduleOnRN } from 'react-native-worklets';
 
-import { PIECE_SET_BY_ID, type PieceSetId } from './pieceSets';
+import { BOARD_THEME_BY_ID, PIECE_SET_BY_ID, type BoardThemeId, type PieceSetId } from './pieceSets';
 
 /**
  * Which way the pieces stand: facing their own player ('each', so the pieces of whoever sits at
@@ -54,8 +54,6 @@ const NAME: Record<PieceSymbol, string> = {
 const VALUE: Record<PieceSymbol, number> = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
 const FILES = 'abcdefgh';
 
-const LIGHT_SQUARE = '#EEEED2';
-const DARK_SQUARE = '#769656';
 
 /** The cheat code: swipe up, up, down, down, left, right, left, right. */
 const CODE = 'UUDDLRLR';
@@ -202,6 +200,8 @@ type Props = {
   hints: boolean;
   /** Which set of pieces to draw. */
   set: PieceSetId;
+  /** Colors of the squares (green when left out). */
+  boardTheme?: BoardThemeId;
   /** Black sits at the bottom instead of white. */
   flipped: boolean;
   /** Changing this starts a fresh game. */
@@ -215,10 +215,11 @@ type Props = {
 };
 
 export const ChessBoard = forwardRef<ChessBoardHandle, Props>(function ChessBoard(
-  { size, disabled, facing, hints, set, flipped, resetKey, onMove, onUndo, onInfo },
+  { size, disabled, facing, hints, set, boardTheme, flipped, resetKey, onMove, onUndo, onInfo },
   ref,
 ) {
   const chess = useRef(new Chess());
+  const colors = BOARD_THEME_BY_ID[boardTheme ?? 'green'];
   const [, redraw] = useState(0);
   const [selected, setSelected] = useState<Square | null>(null);
   const [moves, setMoves] = useState<Move[]>([]);
@@ -378,8 +379,8 @@ export const ChessBoard = forwardRef<ChessBoardHandle, Props>(function ChessBoar
               const base = disco
                 ? `hsl(${(hue + (r * 8 + c) * 17) % 360}, 75%, ${light ? 72 : 48}%)`
                 : light
-                  ? LIGHT_SQUARE
-                  : DARK_SQUARE;
+                  ? colors.light
+                  : colors.dark;
               return (
                 <Pressable
                   key={square}

@@ -207,24 +207,36 @@ export function BinSheet({
 export function AlbumPicker({
   visible,
   used,
+  recent,
   onPick,
   onNew,
   onClose,
 }: {
   visible: boolean;
   used: AlbumRef[];
+  /** Lower-case names of albums used lately, newest first: they're listed first. */
+  recent: string[];
   onPick: (album: DeviceAlbum) => void;
   onNew: () => void;
   onClose: () => void;
 }) {
   const [albums, setAlbums] = useState<DeviceAlbum[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const recentRef = useRef(recent);
+  recentRef.current = recent;
   const load = useCallback(() => {
     setAlbums(null);
     setError(null);
     library
       .listAlbums()
-      .then(setAlbums)
+      .then((list) => {
+        const rank = (a: DeviceAlbum) => {
+          const r = recentRef.current.indexOf(a.title.toLowerCase());
+          return r < 0 ? Infinity : r;
+        };
+        // Recently used first (newest use first); the rest keep their order (biggest first).
+        setAlbums([...list].sort((x, y) => rank(x) - rank(y)));
+      })
       .catch(() => setError("Couldn't read the albums on this phone."));
   }, []);
   useEffect(() => {
@@ -285,6 +297,7 @@ export function AlbumPicker({
                   testID={`pick-${i}`}
                 >
                   <Text style={styles.lineText} numberOfLines={1}>
+                    {recent.includes(a.title.toLowerCase()) ? "★ " : ""}
                     {a.title}
                   </Text>
                   <Text style={styles.lineCount}>
@@ -485,10 +498,18 @@ const VIEWS: { id: MediaView; label: string; blurb: string }[] = [
   { id: "photos", label: "Photos", blurb: "Only photos." },
   { id: "videos", label: "Videos", blurb: "Only videos: usually the biggest files." },
   { id: "screenshots", label: "Screenshots", blurb: "Only screenshots, which tend to pile up." },
+  { id: "live", label: "Live Photos", blurb: "Only Live Photos, the ones that move." },
+  { id: "panoramas", label: "Panoramas", blurb: "Only wide panorama shots." },
+  { id: "big", label: "Big files", blurb: "Videos, longest first: the biggest space savers." },
   {
     id: "bursts",
     label: "Bursts",
     blurb: "Photos taken seconds apart at the same size: the near-duplicates.",
+  },
+  {
+    id: "duplicates",
+    label: "Duplicates",
+    blurb: "The very same shot saved more than once.",
   },
 ];
 
@@ -625,11 +646,13 @@ export function OptionsSheet({
   oldestFirst,
   onOrder,
   advanced,
-  screenshots,
+  hiddenViews,
   jumpLabel,
   onOpenJump,
   onClearJump,
   onShowTour,
+  onReorder,
+  canReorder,
   onClose,
 }: {
   visible: boolean;
@@ -659,11 +682,15 @@ export function OptionsSheet({
   oldestFirst: boolean;
   onOrder: (oldestFirst: boolean) => void;
   advanced: boolean;
-  screenshots: boolean;
+  /** Views not offered yet (see `hiddenViews` in library.ts). */
+  hiddenViews: MediaView[];
   jumpLabel: string | null;
   onOpenJump: () => void;
   onClearJump: () => void;
   onShowTour: () => void;
+  /** Open the screen for dragging albums into a new order; only offered with two or more albums. */
+  onReorder: () => void;
+  canReorder: boolean;
   onClose: () => void;
 }) {
   const versionTaps = useRef({ n: 0, at: 0 });
@@ -747,7 +774,7 @@ export function OptionsSheet({
               ))}
             </View>
             <View style={styles.chips}>
-              {VIEWS.filter((v) => screenshots || v.id !== "screenshots").map((v) => (
+              {VIEWS.filter((v) => !hiddenViews.includes(v.id)).map((v) => (
                 <Pressable
                   key={v.id}
                   style={[styles.chip, view === v.id && styles.chipOn]}
@@ -784,6 +811,14 @@ export function OptionsSheet({
                 <Text style={styles.body}>A quick reminder of the gestures.</Text>
               </View>
             </Pressable>
+            {canReorder && (
+              <Pressable style={styles.choice} onPress={onReorder} accessibilityRole="button" testID="open-reorder">
+                <View style={styles.choiceText}>
+                  <Text style={styles.lineText}>Rearrange albums</Text>
+                  <Text style={styles.body}>Drag your albums into a different order.</Text>
+                </View>
+              </Pressable>
+            )}
             <Text style={styles.section}>Rows of albums</Text>
             <View style={styles.chips}>
               {Array.from({ length: MAX_ROWS }, (_, i) => i + 1).map((n) => {

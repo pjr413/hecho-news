@@ -27,11 +27,18 @@
       [
         "expo-media-library",
         {
-          "photosPermission": "Tidy shows your photos so you can sort them into albums and delete the ones you don\u2019t want.",
+          "photosPermission": "Tidy shows your photos so you can sort them into albums and delete the ones you don’t want.",
           "savePhotosPermission": "Tidy adds the photos you keep to your albums.",
           "granularPermissions": [
             "photo"
           ]
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": false,
+          "recordAudioAndroid": false
         }
       ]
     ],

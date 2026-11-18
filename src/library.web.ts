@@ -1,10 +1,11 @@
 // Browser preview: there is no photo library on the web, so this serves
 // generated sample pictures and keeps every change in memory.
-import { findBursts, type Access, type AlbumRef, type DeviceAlbum, type Filter, type Photo } from './types';
+import { findBursts, findDuplicates, type View, type Access, type AlbumRef, type DeviceAlbum, type Filter, type Photo } from './types';
 
 export const isDemo = true;
 export const advancedQueries = true;
 export const screenshotFilter = true;
+export const hiddenViews: View[] = [];
 
 const HUES = [12, 38, 160, 200, 262, 320, 95, 345];
 
@@ -44,6 +45,11 @@ const isScreenshot = (p: Photo) => !p.video && Number(p.id.slice(5)) % 5 === 0;
 
 // Photos 11, 21, 31... are taken 1.5 s after the one before and are the same size: bursts.
 const make = (i: number): Photo => {
+  // Photos 13, 23, 33... are the same shot saved twice: same instant, same size.
+  if (i % 10 === 2 && i > 2) {
+    const before = make(i - 1);
+    return { ...sample(i), w: before.w, h: before.h, time: before.time };
+  }
   if (i % 10 === 1 && i > 1) {
     const before = sample(i - 1);
     return { ...sample(i), w: before.w, h: before.h, time: before.time! - 1500 };
@@ -62,7 +68,10 @@ const matches = (p: Photo, filter: Filter, before?: number, after?: number) =>
   (filter === 'all' ||
     (filter === 'photos' && !p.video) ||
     (filter === 'videos' && !!p.video) ||
-    (filter === 'screenshots' && isScreenshot(p)));
+    (filter === 'screenshots' && isScreenshot(p)) ||
+    (filter === 'live' && !p.video && Number(p.id.slice(5)) % 4 === 3) ||
+    (filter === 'panoramas' && !p.video && Number(p.id.slice(5)) % 9 === 4) ||
+    (filter === 'big' && !!p.video));
 
 export async function checkAccess(): Promise<{ access: Access; canAsk: boolean }> {
   return { access: 'none', canAsk: true };
@@ -79,10 +88,13 @@ export async function fetchPage(
   limit: number,
   opts: Range & { filter?: Filter } = {},
 ): Promise<Photo[]> {
-  return ordered(
+  const list = ordered(
     photos.filter((p) => matches(p, opts.filter ?? 'all', opts.before, opts.after)),
     opts,
-  ).slice(offset, offset + limit);
+  );
+  // Big files: longest videos first.
+  if (opts.filter === 'big') list.sort((a, b) => (b.duration ?? 0) - (a.duration ?? 0));
+  return list.slice(offset, offset + limit);
 }
 
 export async function dateRange(): Promise<{ oldest: number; newest: number } | null> {
@@ -92,6 +104,10 @@ export async function dateRange(): Promise<{ oldest: number; newest: number } | 
 
 export async function burstPhotos(opts: Range = {}): Promise<Photo[]> {
   return findBursts(ordered(photos.filter((p) => matches(p, 'photos', opts.before, opts.after)), opts));
+}
+
+export async function duplicatePhotos(opts: Range = {}): Promise<Photo[]> {
+  return findDuplicates(ordered(photos.filter((p) => matches(p, 'photos', opts.before, opts.after)), opts));
 }
 
 export async function videoUri(_id: string): Promise<string> {

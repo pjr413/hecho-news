@@ -41,7 +41,9 @@ A small phone app for clearing out a photo library one picture at a time.
   **Reset** offers two choices: reset just the time (the pieces stay where they are) or reset
   the whole game. Also: **Resign** and **Offer a draw** (the other side accepts or declines),
   **Takeback**, a scrolling **move list**, **swap sides**, and a game in progress is **saved**
-  and offered back next time. **Piece sets** – three looks for the pieces (Classic, Outline,
+  and offered back next time. **Board colors** (six), **Sounds** for moves, captures, checks and the end, **Takebacks each** (limit how many
+  moves each player may take back), and **Past games**: finished games are kept (30) and can be stepped
+  through move by move. **Piece sets** – three looks for the pieces (Classic, Outline,
   Letters)
 - **Double-tap** – favorite (the phone's real Favorites)
 - **Undo** steps back the latest choice, whether it was a trash or an album drop
@@ -61,6 +63,12 @@ The trash bin is the one safety net for deleting photos:
 - **Show** only Photos, Videos, Screenshots or Bursts (shots taken seconds apart at the same
   size). A chip at the top says what's filtered; tap it to go back to everything
 - **Newest first or oldest first** – switch the order of the whole timeline (remembered)
+- **Duplicates** (the same shot saved twice), **Live Photos**, **Panoramas** and **Big files**
+  (videos, longest first) join Videos, Screenshots and Bursts
+- **⇄ Keep which?** – next to Trash: shows the photo and the next one side by side (or the whole
+  burst / duplicate group) and keeps the one you tap, sending the rest to the bin
+- **Rearrange albums** (Options) – drag albums into a new order by their ≡ handles. The album
+  picker lists recently used albums first, marked ★
 - **Jump to a date** – pick a year and month and the timeline continues from there
 - Each photo shows the date it was taken; videos show a play badge and their length, and
   **tap the play button** to watch one

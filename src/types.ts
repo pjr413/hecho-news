@@ -14,17 +14,42 @@ export type Photo = {
 };
 
 /** Which kinds of media the timeline shows. 'bursts' is photos taken in quick succession. */
-export type Filter = 'all' | 'photos' | 'videos' | 'screenshots';
-export type View = Filter | 'bursts';
+export type Filter = 'all' | 'photos' | 'videos' | 'screenshots' | 'live' | 'panoramas' | 'big';
+export type View = Filter | 'bursts' | 'duplicates';
 
 /** Photos taken within this many milliseconds of each other, the same size, count as a burst. */
 export const BURST_GAP_MS = 4000;
 
-/**
- * Picks out photos that look like repeats: neighbours (newest first) taken within a few seconds of
- * each other at the same size. Photos that stand alone are dropped.
- */
-export function findBursts(list: Photo[]): Photo[] {
+/** Are these two neighbouring photos shots of the same moment (a burst)? */
+export function isBurstPair(a: Photo, b: Photo): boolean {
+  return (
+    !a.video &&
+    !b.video &&
+    a.time !== undefined &&
+    b.time !== undefined &&
+    Math.abs(a.time - b.time) <= BURST_GAP_MS &&
+    a.w === b.w &&
+    a.h === b.h
+  );
+}
+
+/** Are these two the very same shot saved twice (same instant, same size)? */
+export function isDuplicatePair(a: Photo, b: Photo): boolean {
+  return (
+    !a.video &&
+    !b.video &&
+    a.time !== undefined &&
+    b.time !== undefined &&
+    Math.abs(a.time - b.time) <= 1 &&
+    a.w === b.w &&
+    a.h === b.h
+  );
+}
+
+type Pair = (a: Photo, b: Photo) => boolean;
+
+/** Keeps only photos that have at least one neighbour (newest first or oldest first) passing `same`. */
+function groupsOf(list: Photo[], same: Pair): Photo[] {
   const out: Photo[] = [];
   let group: Photo[] = [];
   const flush = () => {
@@ -33,20 +58,33 @@ export function findBursts(list: Photo[]): Photo[] {
   };
   for (const p of list) {
     const prev = group[group.length - 1];
-    const close =
-      prev &&
-      !p.video &&
-      !prev.video &&
-      p.time !== undefined &&
-      prev.time !== undefined &&
-      Math.abs(prev.time - p.time) <= BURST_GAP_MS &&
-      prev.w === p.w &&
-      prev.h === p.h;
-    if (!close) flush();
+    if (!(prev && same(prev, p))) flush();
     group.push(p);
   }
   flush();
   return out;
+}
+
+/** Photos that look like repeats: neighbours taken within a few seconds at the same size. */
+export const findBursts = (list: Photo[]): Photo[] => groupsOf(list, isBurstPair);
+
+/** Exact repeats: the same shot saved more than once. */
+export const findDuplicates = (list: Photo[]): Photo[] => groupsOf(list, isDuplicatePair);
+
+/**
+ * The photos around position `i` that belong to the same burst or duplicate group (including
+ * `i`), or just the photo and the one after it when it isn't part of a group.
+ */
+export function groupAround(list: Photo[], i: number, view: View): Photo[] {
+  const same: Pair | null = view === 'duplicates' ? isDuplicatePair : view === 'bursts' ? isBurstPair : null;
+  if (same) {
+    let lo = i;
+    let hi = i;
+    while (lo > 0 && same(list[lo - 1], list[lo])) lo--;
+    while (hi + 1 < list.length && same(list[hi], list[hi + 1])) hi++;
+    if (hi > lo) return list.slice(lo, hi + 1);
+  }
+  return list.slice(i, i + 2);
 }
 
 /** Running totals for the secret stats page. */
