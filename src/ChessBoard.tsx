@@ -22,6 +22,8 @@ export type GameInfo = {
   capturedByBlack: PieceSymbol[];
   /** Material white is ahead by (negative when black is ahead). */
   lead: number;
+  /** How many moves (half-moves) have been played. */
+  moveCount: number;
 };
 
 export const START_INFO: GameInfo = {
@@ -31,6 +33,7 @@ export const START_INFO: GameInfo = {
   capturedByWhite: [],
   capturedByBlack: [],
   lead: 0,
+  moveCount: 0,
 };
 
 // The solid set of symbols is used for both sides and colored in. The trailing U+FE0E asks the
@@ -115,6 +118,7 @@ function infoOf(chess: Chess): GameInfo {
     capturedByWhite: byWhite,
     capturedByBlack: byBlack,
     lead,
+    moveCount: chess.history().length,
   };
 }
 
@@ -125,6 +129,8 @@ type Props = {
   disabled: boolean;
   /** Which way the pieces face. */
   facing: Facing;
+  /** Show where a picked piece can go (dots and rings). */
+  hints: boolean;
   /** Changing this starts a fresh game. */
   resetKey: number;
   /** A legal move was just made by this color. */
@@ -133,7 +139,7 @@ type Props = {
   onInfo: (info: GameInfo) => void;
 };
 
-export function ChessBoard({ size, disabled, facing, resetKey, onMove, onInfo }: Props) {
+export function ChessBoard({ size, disabled, facing, hints, resetKey, onMove, onInfo }: Props) {
   const chess = useRef(new Chess());
   const [, redraw] = useState(0);
   const [selected, setSelected] = useState<Square | null>(null);
@@ -260,13 +266,13 @@ export function ChessBoard({ size, disabled, facing, resetKey, onMove, onInfo }:
                     </View>
                   </View>
                 )}
-                {target && !target.captured && !target.flags.includes('e') && (
+                {hints && target && !target.captured && !target.flags.includes('e') && (
                   <View
                     style={[styles.dot, { width: cell * 0.3, height: cell * 0.3, borderRadius: cell }]}
                     testID={`dot-${square}`}
                   />
                 )}
-                {target && (target.captured || target.flags.includes('e')) && (
+                {hints && target && (target.captured || target.flags.includes('e')) && (
                   <View
                     style={[styles.ring, { borderRadius: cell }]}
                     testID={`dot-${square}`}

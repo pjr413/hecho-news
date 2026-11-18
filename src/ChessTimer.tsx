@@ -13,6 +13,8 @@ type Phase = 'idle' | 'running' | 'paused' | 'over';
 type Player = 0 | 1; // 0 is the bottom side, 1 is the top side (upside down)
 type Bonus = 'none' | 'increment' | 'delay' | 'bronstein';
 type Settings = {
+  /** Chess game: show where a picked piece can move. */
+  moveHints: boolean;
   /** Chess game: which way the pieces face (see Facing). */
   pieceFacing: Facing;
   /** Per-turn mode only: time left at the end of a turn is added to the player's next turn. */
@@ -27,6 +29,7 @@ type Settings = {
 
 const KEY = 'photo-sorter/chess-timer/v1';
 const DEFAULTS: Settings = {
+  moveHints: true,
   pieceFacing: 'each',
   carryOver: false,
   mode: 'match',
@@ -190,6 +193,7 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
           matchMin: clampValue('match', Number(saved.matchMin) || DEFAULTS.matchMin),
           turnSec: clampValue('turn', Number(saved.turnSec) || DEFAULTS.turnSec),
           carryOver: saved.carryOver === true,
+          moveHints: saved.moveHints !== false,
           pieceFacing: saved.pieceFacing === 'bottom' || saved.pieceFacing === 'top' ? saved.pieceFacing : 'each',
           bonusType: (['increment', 'delay', 'bronstein'] as const).includes(
             saved.bonusType as 'increment',
@@ -322,7 +326,8 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
   const start = () => {
     if (phase !== 'idle') return;
     setMs([init, init]);
-    setActive(first);
+    // In a game the clock starts for whoever is to move (it might not be white after a time reset).
+    setActive(game ? (info.turn === 'w' ? 0 : 1) : first);
     setLoser(null);
     freshTurn();
     setPhase('running');
@@ -347,6 +352,23 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
   const closePanel = () => {
     setPanel(null);
     release();
+  };
+  /** Game screen: put both clocks back to the start but leave the pieces where they are. */
+  const resetTime = () => {
+    resumeAfter.current = false;
+    setPanel(null);
+    setMs([init, init]);
+    delayRef.current = 0;
+    usedRef.current = 0;
+    setDelayLeft(0);
+    if (info.over) {
+      // A game already decided on the board stays decided; only the clocks go back.
+      setPhase('over');
+    } else {
+      setPhase('idle');
+      setLoser(null);
+    }
+    setActive(info.turn === 'w' ? 0 : 1);
   };
   const reset = () => {
     resumeAfter.current = false;
@@ -390,9 +412,13 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
     } else if (phase === 'idle') {
       fg = '#E5E7EB';
       label = game
-        ? player === 0
-          ? 'White moves first'
-          : 'Black'
+        ? info.moveCount === 0
+          ? player === 0
+            ? 'White moves first'
+            : 'Black'
+          : info.turn === (player === 0 ? 'w' : 'b')
+            ? 'Your move'
+            : 'Waiting'
         : first === player
           ? 'Goes first'
           : 'Tap to go first';
@@ -537,7 +563,7 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
           disabled: phase !== 'running' && phase !== 'paused',
           testID: 'timer-pause',
         })}
-        {button('■ Reset', () => openPanel('confirm'), { disabled: phase === 'idle', testID: 'timer-reset' })}
+        {button('■ Reset', () => openPanel('confirm'), { disabled: phase === 'idle' && !(game && info.moveCount > 0), testID: 'timer-reset' })}
       </View>
     </View>
   );
@@ -552,6 +578,7 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
               size={boardSize}
               disabled={boardDisabled}
               facing={settings.pieceFacing}
+              hints={settings.moveHints}
               resetKey={resetKey}
               onMove={onGameMove}
               onInfo={onGameInfo}
@@ -579,24 +606,46 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
       {panel === 'confirm' && (
         <View style={styles.overlay}>
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>{game ? 'Reset the game?' : 'Reset the clock?'}</Text>
+            <Text style={styles.cardTitle}>{game ? 'Reset' : 'Reset the clock?'}</Text>
             <Text style={styles.cardBody}>
               {game
-                ? 'This ends the game, puts every piece back and sets both clocks to the start.'
+                ? 'Reset the time puts both clocks back to the start and leaves the pieces where they are. Reset the game starts over with every piece in place and fresh clocks.'
                 : 'This stops the game and puts both clocks back to the start.'}
             </Text>
-            <View style={styles.cardButtons}>
-              <Pressable style={styles.cardButton} onPress={closePanel} testID="timer-keep">
-                <Text style={styles.controlText}>Keep going</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.cardButton, styles.cardDanger]}
-                onPress={reset}
-                testID="timer-confirm-reset"
-              >
-                <Text style={styles.controlText}>Reset</Text>
-              </Pressable>
-            </View>
+            {game ? (
+              <View style={styles.cardStack}>
+                <Pressable style={styles.stackButton} onPress={resetTime} testID="timer-reset-time">
+                  <Text style={styles.controlText}>Reset the time</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.stackButton, styles.cardDanger]}
+                  onPress={reset}
+                  testID="timer-confirm-reset"
+                >
+                  <Text style={styles.controlText}>Reset the game</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.stackButton, styles.cardPrimary]}
+                  onPress={closePanel}
+                  testID="timer-keep"
+                >
+                  <Text style={[styles.controlText, styles.controlPrimaryText]}>Keep going</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <View style={styles.cardButtons}>
+                <Pressable style={styles.cardButton} onPress={closePanel} testID="timer-keep">
+                  <Text style={styles.controlText}>Keep going</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.cardButton, styles.cardDanger]}
+                  onPress={reset}
+                  testID="timer-confirm-reset"
+                >
+                  <Text style={styles.controlText}>Reset</Text>
+                </Pressable>
+              </View>
+            )}
           </View>
         </View>
       )}
@@ -634,6 +683,30 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
                   </View>
                   <Text style={styles.cardBody} testID="facing-blurb">
                     {FACING_CHOICES.find((f) => f.id === settings.pieceFacing)?.blurb}
+                  </Text>
+                  <Text style={styles.sectionLabel}>Move hints</Text>
+                  <View style={styles.segment}>
+                    {[true, false].map((on) => (
+                      <Pressable
+                        key={String(on)}
+                        style={[styles.segmentItem, settings.moveHints === on && styles.segmentOn]}
+                        onPress={() => saveSettings({ ...settings, moveHints: on })}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: settings.moveHints === on }}
+                        testID={on ? 'hints-on' : 'hints-off'}
+                      >
+                        <Text
+                          style={[styles.segmentText, settings.moveHints === on && styles.segmentTextOn]}
+                        >
+                          {on ? 'On' : 'Off'}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  <Text style={styles.cardBody} testID="hints-blurb">
+                    {settings.moveHints
+                      ? 'Picking a piece shows where it can move.'
+                      : 'Picking a piece shows nothing. You have to know where it can go; an illegal move simply won’t happen.'}
                   </Text>
                   <Text style={styles.sectionLabel}>Clock</Text>
                 </>
@@ -921,6 +994,14 @@ const styles = StyleSheet.create({
   cardBody: { color: '#A9AEB8', fontSize: 14, lineHeight: 20 },
   cardNote: { color: '#7C828E', fontSize: 13, textAlign: 'center' },
   cardButtons: { flexDirection: 'row', gap: 10 },
+  cardStack: { gap: 10 },
+  stackButton: {
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#2A2D37',
+  },
   cardButton: {
     flex: 1,
     height: 48,
