@@ -68,6 +68,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   const [viewSlot, setViewSlot] = useState<number | null>(null);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [timerOpen, setTimerOpen] = useState(false);
+  const [gameOpen, setGameOpen] = useState(false);
   const [binOpen, setBinOpen] = useState(false);
   const [binBusy, setBinBusy] = useState(false);
   const [binError, setBinError] = useState<string | null>(null);
@@ -456,6 +457,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
 
   // The chess timer takes over the whole screen; this screen keeps its place underneath.
   if (timerOpen) return <ChessTimer onExit={() => setTimerOpen(false)} />;
+  if (gameOpen) return <ChessTimer game onExit={() => setGameOpen(false)} />;
 
   return (
     <View
@@ -701,6 +703,10 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         onOpenTimer={() => {
           setOptionsOpen(false);
           setTimerOpen(true);
+        }}
+        onOpenGame={() => {
+          setOptionsOpen(false);
+          setGameOpen(true);
         }}
         onClose={() => setOptionsOpen(false)}
       />

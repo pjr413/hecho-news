@@ -29,6 +29,13 @@ A small phone app for clearing out a photo library one picture at a time.
   Tap a side before starting to choose who goes first; during play tap your own side when
   you've moved. The side slowly turns red from 10 seconds left down to 5, and the screen
   stays on while it's showing
+- **Chess game** (a button in Options) – a full two-player game of chess on one phone laid
+  between you: black's pieces are turned to face the player across the table, and each player
+  gets a panel with their clock, status and the pieces they've taken. Tap a piece to see where it
+  can go, tap a square to move. All the rules are there (castling, en passant, promotion, check,
+  checkmate, stalemate and the draw rules). Moves pass the clock automatically, using the same
+  time settings as the chess timer, and running out of time ends the game. White moves first
+  and sits at the bottom; the rules come from the `chess.js` library
 - **Double-tap** – favorite (the phone's real Favorites)
 - **Undo** steps back the latest choice, whether it was a trash or an album drop
 

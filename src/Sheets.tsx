@@ -510,6 +510,7 @@ export function OptionsSheet({
   minRows,
   onRows,
   onOpenTimer,
+  onOpenGame,
   onClose,
 }: {
   visible: boolean;
@@ -525,6 +526,7 @@ export function OptionsSheet({
   minRows: number;
   onRows: (rows: number) => void;
   onOpenTimer: () => void;
+  onOpenGame: () => void;
   onClose: () => void;
 }) {
   const [filling, setFilling] = useState(false);
@@ -660,6 +662,20 @@ export function OptionsSheet({
             <View style={styles.choiceText}>
               <Text style={styles.lineText}>Chess timer</Text>
               <Text style={styles.body}>A two-player clock for a game on the table</Text>
+            </View>
+          </Pressable>
+          <Pressable
+            style={styles.choice}
+            onPress={onOpenGame}
+            accessibilityRole="button"
+            testID="open-game"
+          >
+            <Text style={styles.plusBig}>♟︎</Text>
+            <View style={styles.choiceText}>
+              <Text style={styles.lineText}>Chess game</Text>
+              <Text style={styles.body}>
+                Play chess against someone across the table, with the clock
+              </Text>
             </View>
           </Pressable>
           <Text style={styles.body}>{info}</Text>

@@ -1,9 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import type { Color } from 'chess.js';
+import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { ChessBoard, glyph, pieceStyle, START_INFO, type GameInfo } from './ChessBoard';
 import { allowSleep, keepAwake } from './keepAwake';
 
 type Mode = 'match' | 'turn';
@@ -123,8 +125,13 @@ function describe(s: Settings): string {
   return `Match time · ${s.matchMin} min each${extra}`;
 }
 
-export function ChessTimer({ onExit }: { onExit: () => void }) {
+/**
+ * The two-player clock. With `game` set it also shows a chessboard between the players: moves on
+ * the board pass the clock, and a checkmate or draw ends the game.
+ */
+export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?: boolean }) {
   const insets = useSafeAreaInsets();
+  const { width, height } = useWindowDimensions();
   const [settings, setSettings] = useState<Settings>(DEFAULTS);
   const [phase, setPhase] = useState<Phase>('idle');
   const [active, setActive] = useState<Player>(0);
@@ -132,6 +139,9 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
   const [ms, setMs] = useState<[number, number]>([initialMs(DEFAULTS), initialMs(DEFAULTS)]);
   const [loser, setLoser] = useState<Player | null>(null);
   const [panel, setPanel] = useState<null | 'options' | 'confirm'>(null);
+  const [info, setInfo] = useState<GameInfo>(START_INFO);
+  /** Bumped to start a fresh game on the board. */
+  const [resetKey, setResetKey] = useState(0);
   /** True when we paused the clock just to show a panel, so closing it should resume. */
   const resumeAfter = useRef(false);
   const lastTick = useRef(0);
@@ -222,14 +232,8 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
     }
   }, [ms, phase, active]);
 
-  const press = (player: Player) => {
-    if (phase === 'idle') {
-      // Before the start, tapping a side chooses who goes first.
-      setFirst(player);
-      setActive(player);
-      return;
-    }
-    if (phase !== 'running' || player !== active) return;
+  /** The player whose turn it is has finished: pass the clock to the other side. */
+  const pass = (player: Player) => {
     const other: Player = player === 0 ? 1 : 0;
     // Extra time earned by the move just made.
     const earned =
@@ -251,7 +255,47 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
       return next;
     });
     freshTurn();
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    if (!game) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+  };
+
+  const press = (player: Player) => {
+    if (game) return; // in a game, moves on the board pass the clock
+    if (phase === 'idle') {
+      // Before the start, tapping a side chooses who goes first.
+      setFirst(player);
+      setActive(player);
+      return;
+    }
+    if (phase !== 'running' || player !== active) return;
+    pass(player);
+  };
+
+  /** A legal move was made on the board: it starts the clock, or passes it. */
+  const onGameMove = (mover: Color) => {
+    const player: Player = mover === 'w' ? 0 : 1;
+    if (phase === 'idle') {
+      // The first move starts the clock, running for the other side.
+      const bump = settings.mode === 'match' && bonusType === 'increment' ? bonusMs : 0;
+      setMs(player === 0 ? [init + bump, init] : [init, init + bump]);
+      setActive(player === 0 ? 1 : 0);
+      setLoser(null);
+      delayRef.current = bonusType === 'delay' ? bonusMs : 0;
+      usedRef.current = 0;
+      setDelayLeft(delayRef.current);
+      setPhase('running');
+      return;
+    }
+    if (phase === 'running' && active === player) pass(player);
+  };
+
+  /** The game changed; a checkmate or draw stops the clock. */
+  const onGameInfo = (next: GameInfo) => {
+    setInfo(next);
+    if (!next.over) return;
+    setPhase('over');
+    // The side to move has been checkmated.
+    setLoser(next.over.kind === 'checkmate' ? (next.turn === 'w' ? 0 : 1) : null);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
   };
 
   const start = () => {
@@ -290,6 +334,8 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
     setLoser(null);
     setActive(first);
     setMs([init, init]);
+    setResetKey((k) => k + 1);
+    setInfo(START_INFO);
     delayRef.current = 0;
     usedRef.current = 0;
     setDelayLeft(0);
@@ -297,7 +343,8 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
 
   const locked = phase !== 'idle';
 
-  const side = (player: Player) => {
+  /** How a player's side looks right now: colors, the line of text, and the time to show. */
+  const look = (player: Player) => {
     const isActive = (phase === 'running' || phase === 'paused') && active === player;
     const left = ms[player];
     // Fades from the normal color to red as the time left drops from 10 s to 5 s.
@@ -311,22 +358,45 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
       bg = lost ? '#C62828' : '#1E6B3C';
       fg = '#FFFFFF';
       label = lost ? 'Time’s up' : 'Wins on time';
+      if (game && info.over) {
+        if (info.over.kind === 'checkmate') {
+          label = lost ? 'Checkmate. You lose.' : 'Checkmate. You win!';
+        } else {
+          bg = '#3A3F4B';
+          label = `Draw: ${info.over.reason}`;
+        }
+      }
     } else if (phase === 'idle') {
       fg = '#E5E7EB';
-      label = first === player ? 'Goes first' : 'Tap to go first';
+      label = game
+        ? player === 0
+          ? 'White moves first'
+          : 'Black'
+        : first === player
+          ? 'Goes first'
+          : 'Tap to go first';
     } else if (isActive) {
       bg = mix(LIGHT_RGB, RED_RGB, redness);
       fg = mix(INK_RGB, WHITE_RGB, redness);
       label =
         phase === 'paused'
           ? 'Paused'
-          : delayLeft > 0
-            ? `Delay ${Math.ceil(delayLeft / 1000)} s`
-            : 'Tap when you’ve moved';
+          : game && info.check
+            ? 'Check!'
+            : delayLeft > 0
+              ? `Delay ${Math.ceil(delayLeft / 1000)} s`
+              : game
+                ? 'Your move'
+                : 'Tap when you’ve moved';
     } else {
       label = 'Waiting';
     }
+    return { bg, fg, label, left };
+  };
 
+  /** A big tappable side: the clock-only screen. */
+  const side = (player: Player) => {
+    const { bg, fg, label, left } = look(player);
     return (
       <Pressable
         onPress={() => press(player)}
@@ -345,6 +415,46 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
         </Text>
         <Text style={[styles.sideLabel, { color: fg }]}>{label}</Text>
       </Pressable>
+    );
+  };
+
+  /** A compact player panel for the game screen: clock, status, and what they've captured. */
+  const playerPanel = (player: Player) => {
+    const { bg, fg, label, left } = look(player);
+    const mine: Color = player === 0 ? 'w' : 'b';
+    const theirs: Color = player === 0 ? 'b' : 'w';
+    const taken = mine === 'w' ? info.capturedByWhite : info.capturedByBlack;
+    const lead = mine === 'w' ? info.lead : -info.lead;
+    return (
+      <View
+        style={[styles.panel, { backgroundColor: bg }, player === 1 && styles.flipped]}
+        accessible
+        accessibilityLabel={`${player === 0 ? 'White' : 'Black'}. ${format(left)}. ${label}`}
+        testID={player === 0 ? 'side-bottom' : 'side-top'}
+      >
+        <Text
+          style={[styles.panelTime, { color: fg }]}
+          adjustsFontSizeToFit
+          minimumFontScale={0.5}
+          numberOfLines={1}
+          testID={player === 0 ? 'time-bottom' : 'time-top'}
+        >
+          {format(left)}
+        </Text>
+        <View style={styles.panelInfo}>
+          <Text style={[styles.panelLabel, { color: fg }]} numberOfLines={2} testID={player === 0 ? 'label-bottom' : 'label-top'}>
+            {label}
+          </Text>
+          <View style={styles.taken}>
+            {taken.map((type, i) => (
+              <Text key={i} style={pieceStyle(theirs, 20)} allowFontScaling={false}>
+                {glyph(type)}
+              </Text>
+            ))}
+            {lead > 0 && <Text style={[styles.lead, { color: fg }]}>+{lead}</Text>}
+          </View>
+        </View>
+      </View>
     );
   };
 
@@ -384,33 +494,74 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
     [settings],
   );
 
+  const boardDisabled = phase === 'paused' || phase === 'over' || panel !== null;
+  const spaceForBoard = height - insets.top - insets.bottom - 88 - 2 * 96 - 24;
+  const boardSize = Math.max(160, Math.min(width - 16, spaceForBoard));
+
+  const centerBlock = (
+    <View style={styles.center}>
+      <Text style={styles.summary} testID="timer-summary">
+        {phase === 'over'
+          ? game && info.over
+            ? info.over.kind === 'checkmate'
+              ? 'Checkmate'
+              : 'Draw'
+            : 'Time’s up'
+          : describe(settings)}
+      </Text>
+      <View style={styles.controls}>
+        {button('⚙ Options', () => openPanel('options'), { testID: 'timer-options' })}
+        {button('▶ Start', start, { disabled: phase !== 'idle', primary: true, testID: 'timer-start' })}
+        {button(phase === 'paused' ? '▶ Resume' : '❚❚ Pause', togglePause, {
+          disabled: phase !== 'running' && phase !== 'paused',
+          testID: 'timer-pause',
+        })}
+        {button('■ Reset', () => openPanel('confirm'), { disabled: phase === 'idle', testID: 'timer-reset' })}
+      </View>
+    </View>
+  );
+
   return (
     <View style={styles.root}>
-      <View style={[styles.half, { paddingTop: insets.top + 10 }]}>{side(1)}</View>
-
-      <View style={styles.center}>
-        <Text style={styles.summary} testID="timer-summary">
-          {phase === 'over' ? 'Time’s up' : describe(settings)}
-        </Text>
-        <View style={styles.controls}>
-          {button('⚙ Options', () => openPanel('options'), { testID: 'timer-options' })}
-          {button('▶ Start', start, { disabled: phase !== 'idle', primary: true, testID: 'timer-start' })}
-          {button(phase === 'paused' ? '▶ Resume' : '❚❚ Pause', togglePause, {
-            disabled: phase !== 'running' && phase !== 'paused',
-            testID: 'timer-pause',
-          })}
-          {button('■ Reset', () => openPanel('confirm'), { disabled: phase === 'idle', testID: 'timer-reset' })}
-        </View>
-      </View>
-
-      <View style={[styles.half, { paddingBottom: insets.bottom + 10 }]}>{side(0)}</View>
+      {game ? (
+        <>
+          <View style={[styles.panelWrap, { paddingTop: insets.top + 6 }]}>{playerPanel(1)}</View>
+          <View style={styles.boardWrap}>
+            <ChessBoard
+              size={boardSize}
+              disabled={boardDisabled}
+              resetKey={resetKey}
+              onMove={onGameMove}
+              onInfo={onGameInfo}
+            />
+            {phase === 'paused' && panel === null && (
+              <View
+                style={[styles.boardVeil, { width: Math.floor(boardSize / 8) * 8, height: Math.floor(boardSize / 8) * 8 }]}
+                pointerEvents="none"
+              >
+                <Text style={styles.veilText}>Paused</Text>
+              </View>
+            )}
+          </View>
+          {centerBlock}
+          <View style={[styles.panelWrap, { paddingBottom: insets.bottom + 6 }]}>{playerPanel(0)}</View>
+        </>
+      ) : (
+        <>
+          <View style={[styles.half, { paddingTop: insets.top + 10 }]}>{side(1)}</View>
+          {centerBlock}
+          <View style={[styles.half, { paddingBottom: insets.bottom + 10 }]}>{side(0)}</View>
+        </>
+      )}
 
       {panel === 'confirm' && (
         <View style={styles.overlay}>
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Reset the clock?</Text>
+            <Text style={styles.cardTitle}>{game ? 'Reset the game?' : 'Reset the clock?'}</Text>
             <Text style={styles.cardBody}>
-              This stops the game and puts both clocks back to the start.
+              {game
+                ? 'This ends the game, puts every piece back and sets both clocks to the start.'
+                : 'This stops the game and puts both clocks back to the start.'}
             </Text>
             <View style={styles.cardButtons}>
               <Pressable style={styles.cardButton} onPress={closePanel} testID="timer-keep">
@@ -431,7 +582,7 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
       {panel === 'options' && (
         <View style={styles.overlay}>
           <View style={[styles.card, styles.cardTall]}>
-            <Text style={styles.cardTitle}>Chess timer</Text>
+            <Text style={styles.cardTitle}>{game ? 'Chess game' : 'Chess timer'}</Text>
             <ScrollView style={styles.cardScroll} contentContainerStyle={styles.cardScrollBody}>
               {locked && (
                 <Text style={styles.cardBody}>
@@ -663,6 +814,28 @@ const styles = StyleSheet.create({
   time: { fontSize: 88, fontWeight: '800', fontVariant: ['tabular-nums'], maxWidth: '100%' },
   sideLabel: { fontSize: 16, fontWeight: '600', opacity: 0.85 },
   center: { paddingHorizontal: 12, paddingVertical: 10, gap: 10 },
+  panelWrap: { flex: 1, minHeight: 84, paddingHorizontal: 8 },
+  panel: {
+    flex: 1,
+    borderRadius: 22,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    gap: 14,
+  },
+  panelTime: { width: '46%', fontSize: 44, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  panelInfo: { flex: 1, gap: 6 },
+  panelLabel: { fontSize: 16, fontWeight: '700' },
+  taken: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', minHeight: 24 },
+  lead: { fontSize: 15, fontWeight: '800', marginLeft: 6 },
+  boardWrap: { alignItems: 'center', justifyContent: 'center', paddingVertical: 4 },
+  boardVeil: {
+    position: 'absolute',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  veilText: { color: '#fff', fontSize: 28, fontWeight: '800' },
   summary: { color: '#A9AEB8', fontSize: 14, textAlign: 'center' },
   controls: { flexDirection: 'row', gap: 8 },
   control: {
