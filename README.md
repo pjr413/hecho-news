@@ -37,7 +37,9 @@ A small phone app for clearing out a photo library one picture at a time.
   time settings as the chess timer, and running out of time ends the game. White moves first
   and sits at the bottom; the rules come from the `chess.js` library. In the game's options,
   **Piece direction** lets you choose between each side's pieces facing their own player, all
-  pieces upright for the bottom player, or all upright for the top player
+  pieces upright for the bottom player, or all upright for the top player. **Move hints** (the dots showing where a picked piece can go) can be switched off.
+  **Reset** offers two choices: reset just the time (the pieces stay where they are) or reset
+  the whole game
 - **Double-tap** – favorite (the phone's real Favorites)
 - **Undo** steps back the latest choice, whether it was a trash or an album drop
 
