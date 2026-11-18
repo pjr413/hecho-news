@@ -35,7 +35,9 @@ A small phone app for clearing out a photo library one picture at a time.
   can go, tap a square to move. All the rules are there (castling, en passant, promotion, check,
   checkmate, stalemate and the draw rules). Moves pass the clock automatically, using the same
   time settings as the chess timer, and running out of time ends the game. White moves first
-  and sits at the bottom; the rules come from the `chess.js` library
+  and sits at the bottom; the rules come from the `chess.js` library. In the game's options,
+  **Piece direction** lets you choose between each side's pieces facing their own player, all
+  pieces upright for the bottom player, or all upright for the top player
 - **Double-tap** – favorite (the phone's real Favorites)
 - **Undo** steps back the latest choice, whether it was a trash or an album drop
 

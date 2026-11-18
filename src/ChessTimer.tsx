@@ -5,7 +5,7 @@ import type { Color } from 'chess.js';
 import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ChessBoard, glyph, pieceStyle, START_INFO, type GameInfo } from './ChessBoard';
+import { ChessBoard, glyph, pieceStyle, START_INFO, type Facing, type GameInfo } from './ChessBoard';
 import { allowSleep, keepAwake } from './keepAwake';
 
 type Mode = 'match' | 'turn';
@@ -13,6 +13,8 @@ type Phase = 'idle' | 'running' | 'paused' | 'over';
 type Player = 0 | 1; // 0 is the bottom side, 1 is the top side (upside down)
 type Bonus = 'none' | 'increment' | 'delay' | 'bronstein';
 type Settings = {
+  /** Chess game: which way the pieces face (see Facing). */
+  pieceFacing: Facing;
   /** Per-turn mode only: time left at the end of a turn is added to the player's next turn. */
   carryOver: boolean;
   mode: Mode;
@@ -25,6 +27,7 @@ type Settings = {
 
 const KEY = 'photo-sorter/chess-timer/v1';
 const DEFAULTS: Settings = {
+  pieceFacing: 'each',
   carryOver: false,
   mode: 'match',
   matchMin: 10,
@@ -65,6 +68,23 @@ const BONUS_INFO: Record<Bonus, { label: string; blurb: string }> = {
   },
 };
 const TURN_CHOICES = [10, 15, 30, 45, 60, 90, 120];
+const FACING_CHOICES: { id: Facing; label: string; blurb: string }[] = [
+  {
+    id: 'each',
+    label: 'Face each player',
+    blurb: 'Black’s pieces are turned to face the player across the table.',
+  },
+  {
+    id: 'bottom',
+    label: 'All face the bottom',
+    blurb: 'Every piece stands upright for the player at the bottom, like a normal board.',
+  },
+  {
+    id: 'top',
+    label: 'All face the top',
+    blurb: 'Every piece stands upright for the player at the top.',
+  },
+];
 
 const DARK = '#1B1D24';
 type Rgb = [number, number, number];
@@ -170,6 +190,7 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
           matchMin: clampValue('match', Number(saved.matchMin) || DEFAULTS.matchMin),
           turnSec: clampValue('turn', Number(saved.turnSec) || DEFAULTS.turnSec),
           carryOver: saved.carryOver === true,
+          pieceFacing: saved.pieceFacing === 'bottom' || saved.pieceFacing === 'top' ? saved.pieceFacing : 'each',
           bonusType: (['increment', 'delay', 'bronstein'] as const).includes(
             saved.bonusType as 'increment',
           )
@@ -530,6 +551,7 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
             <ChessBoard
               size={boardSize}
               disabled={boardDisabled}
+              facing={settings.pieceFacing}
               resetKey={resetKey}
               onMove={onGameMove}
               onInfo={onGameInfo}
@@ -588,6 +610,33 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
                 <Text style={styles.cardBody}>
                   A game is in progress. Reset the clock to change these.
                 </Text>
+              )}
+              {game && (
+                <>
+                  <Text style={styles.sectionLabel}>Piece direction</Text>
+                  <View style={styles.chips}>
+                    {FACING_CHOICES.map((f) => (
+                      <Pressable
+                        key={f.id}
+                        style={[styles.chip, settings.pieceFacing === f.id && styles.segmentOn]}
+                        onPress={() => saveSettings({ ...settings, pieceFacing: f.id })}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: settings.pieceFacing === f.id }}
+                        testID={`facing-${f.id}`}
+                      >
+                        <Text
+                          style={[styles.segmentText, settings.pieceFacing === f.id && styles.segmentTextOn]}
+                        >
+                          {f.label}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  <Text style={styles.cardBody} testID="facing-blurb">
+                    {FACING_CHOICES.find((f) => f.id === settings.pieceFacing)?.blurb}
+                  </Text>
+                  <Text style={styles.sectionLabel}>Clock</Text>
+                </>
               )}
               <View style={styles.segment}>
                 {(['match', 'turn'] as const).map((m) => (

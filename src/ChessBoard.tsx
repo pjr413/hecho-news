@@ -3,7 +3,14 @@ import * as Haptics from 'expo-haptics';
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+/**
+ * Which way the pieces stand: facing their own player ('each', so black's are turned toward the
+ * player at the top), all upright for the player at the bottom, or all upright for the top one.
+ */
+export type Facing = 'each' | 'bottom' | 'top';
+
 /** What the rest of the screen needs to know about the game. */
+
 export type GameInfo = {
   /** Whose move it is. White sits at the bottom, black at the top. */
   turn: Color;
@@ -102,6 +109,8 @@ type Props = {
   size: number;
   /** Ignore taps (the clock is paused, a panel is open, or the game is over). */
   disabled: boolean;
+  /** Which way the pieces face. */
+  facing: Facing;
   /** Changing this starts a fresh game. */
   resetKey: number;
   /** A legal move was just made by this color. */
@@ -110,7 +119,7 @@ type Props = {
   onInfo: (info: GameInfo) => void;
 };
 
-export function ChessBoard({ size, disabled, resetKey, onMove, onInfo }: Props) {
+export function ChessBoard({ size, disabled, facing, resetKey, onMove, onInfo }: Props) {
   const chess = useRef(new Chess());
   const [, redraw] = useState(0);
   const [selected, setSelected] = useState<Square | null>(null);
@@ -172,6 +181,8 @@ export function ChessBoard({ size, disabled, resetKey, onMove, onInfo }: Props) 
     }
   };
 
+  /** Is a piece of this color drawn turned around (upside down on screen)? */
+  const turned = (color: Color) => (facing === 'top' ? true : facing === 'bottom' ? false : color === 'b');
   const cell = Math.floor(size / 8);
   const side = cell * 8;
   const rows = chess.current.board(); // rank 8 first
@@ -215,8 +226,7 @@ export function ChessBoard({ size, disabled, resetKey, onMove, onInfo }: Props) 
                     style={[
                       styles.piece,
                       pieceStyle(piece.color, cell * 0.84),
-                      // Black sits across the table, so their pieces are turned to face them.
-                      piece.color === 'b' && styles.turnedAround,
+                      turned(piece.color) && styles.turnedAround,
                     ]}
                     allowFontScaling={false}
                     testID={`piece-${square}`}
@@ -261,7 +271,13 @@ export function ChessBoard({ size, disabled, resetKey, onMove, onInfo }: Props) 
                 testID={`promo-${type}`}
               >
                 <Text
-                  style={[styles.piece, pieceStyle(promo.color, cell * 0.84)]}
+                  style={[
+                    styles.piece,
+                    pieceStyle(promo.color, cell * 0.84),
+                    // The picker faces whoever is promoting; each piece in it still follows the
+                    // chosen direction, so it matches the pieces on the board.
+                    turned(promo.color) !== (promo.color === 'b') && styles.turnedAround,
+                  ]}
                   allowFontScaling={false}
                 >
                   {GLYPH[type]}
