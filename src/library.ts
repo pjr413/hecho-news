@@ -76,12 +76,16 @@ const toPhoto = (r: Row): Photo => ({
   h: r.height ?? undefined,
 });
 
+/** Limits and order for the timeline: only things at or before / after a time, oldest or newest first. */
+export type Range = { before?: number; after?: number; oldestFirst?: boolean };
+
 /** Builds the query for a kind of media (and, optionally, only things at or before a time). */
-async function buildQuery(filter: Filter, before?: number): Promise<Query | null> {
+async function buildQuery(filter: Filter, range: Range = {}): Promise<Query | null> {
+  const { before, after, oldestFirst } = range;
   if (!advancedQueries) {
     return new Query()
       .eq(AssetField.MEDIA_TYPE, MediaType.IMAGE)
-      .orderBy({ key: AssetField.CREATION_TIME, ascending: false });
+      .orderBy({ key: AssetField.CREATION_TIME, ascending: !!oldestFirst });
   }
   let q = new Query();
   if (filter === 'photos') q = q.eq(AssetField.MEDIA_TYPE, MediaType.IMAGE);
@@ -99,16 +103,17 @@ async function buildQuery(filter: Filter, before?: number): Promise<Query | null
     }
   } else q = q.within(AssetField.MEDIA_TYPE, [MediaType.IMAGE, MediaType.VIDEO]);
   if (before !== undefined) q = q.lte(AssetField.CREATION_TIME, await fromMs(before));
-  return q.orderBy({ key: AssetField.CREATION_TIME, ascending: false });
+  if (after !== undefined) q = q.gte(AssetField.CREATION_TIME, await fromMs(after));
+  return q.orderBy({ key: AssetField.CREATION_TIME, ascending: !!oldestFirst });
 }
 
 /** Newest first. Asset ids double as image URIs (ph:// on iOS, content:// on Android). */
 export async function fetchPage(
   offset: number,
   limit: number,
-  opts: { filter?: Filter; before?: number } = {},
+  opts: Range & { filter?: Filter } = {},
 ): Promise<Photo[]> {
-  const q = await buildQuery(opts.filter ?? 'all', opts.before);
+  const q = await buildQuery(opts.filter ?? 'all', opts);
   if (!q) return [];
   return (await q.limit(limit).offset(offset).exeForMetadata()).map(toPhoto);
 }
@@ -131,9 +136,9 @@ export async function dateRange(): Promise<{ oldest: number; newest: number } | 
 }
 
 /** Photos that look like repeats: shots taken seconds apart at the same size. */
-export async function burstPhotos(opts: { before?: number } = {}): Promise<Photo[]> {
+export async function burstPhotos(opts: Range = {}): Promise<Photo[]> {
   if (!advancedQueries) return [];
-  const q = await buildQuery('photos', opts.before);
+  const q = await buildQuery('photos', opts);
   if (!q) return [];
   const rows = await q.limit(4000).exeForMetadata();
   return findBursts(rows.map(toPhoto));

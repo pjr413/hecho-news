@@ -60,6 +60,7 @@ The trash bin is the one safety net for deleting photos:
 
 - **Show** only Photos, Videos, Screenshots or Bursts (shots taken seconds apart at the same
   size). A chip at the top says what's filtered; tap it to go back to everything
+- **Newest first or oldest first** – switch the order of the whole timeline (remembered)
 - **Jump to a date** – pick a year and month and the timeline continues from there
 - Each photo shows the date it was taken; videos show a play badge and their length, and
   **tap the play button** to watch one

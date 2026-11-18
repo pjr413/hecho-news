@@ -622,6 +622,8 @@ export function OptionsSheet({
   onOpenGames,
   view,
   onView,
+  oldestFirst,
+  onOrder,
   advanced,
   screenshots,
   jumpLabel,
@@ -654,6 +656,8 @@ export function OptionsSheet({
   view: MediaView;
   onView: (view: MediaView) => void;
   /** Filters and jump-to-date are available (see `advancedQueries` in library.ts). */
+  oldestFirst: boolean;
+  onOrder: (oldestFirst: boolean) => void;
   advanced: boolean;
   screenshots: boolean;
   jumpLabel: string | null;
@@ -725,6 +729,23 @@ export function OptionsSheet({
             {advanced && (
               <>
             <Text style={styles.section}>Find photos</Text>
+            <View style={styles.chips}>
+              {[
+                { oldest: false, label: "Newest first" },
+                { oldest: true, label: "Oldest first" },
+              ].map((o) => (
+                <Pressable
+                  key={o.label}
+                  style={[styles.chip, oldestFirst === o.oldest && styles.chipOn]}
+                  onPress={() => onOrder(o.oldest)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: oldestFirst === o.oldest }}
+                  testID={o.oldest ? "order-oldest" : "order-newest"}
+                >
+                  <Text style={[styles.chipText, oldestFirst === o.oldest && styles.chipTextOn]}>{o.label}</Text>
+                </Pressable>
+              ))}
+            </View>
             <View style={styles.chips}>
               {VIEWS.filter((v) => screenshots || v.id !== "screenshots").map((v) => (
                 <Pressable

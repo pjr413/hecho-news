@@ -53,8 +53,12 @@ const make = (i: number): Photo => {
 
 let photos: Photo[] = Array.from({ length: 130 }, (_, i) => make(i));
 
-const matches = (p: Photo, filter: Filter, before?: number) =>
+type Range = { before?: number; after?: number; oldestFirst?: boolean };
+const ordered = (list: Photo[], r: Range) => (r.oldestFirst ? [...list].reverse() : list);
+
+const matches = (p: Photo, filter: Filter, before?: number, after?: number) =>
   (before === undefined || (p.time ?? 0) <= before) &&
+  (after === undefined || (p.time ?? 0) >= after) &&
   (filter === 'all' ||
     (filter === 'photos' && !p.video) ||
     (filter === 'videos' && !!p.video) ||
@@ -73,11 +77,12 @@ export async function chooseMorePhotos(): Promise<void> {}
 export async function fetchPage(
   offset: number,
   limit: number,
-  opts: { filter?: Filter; before?: number } = {},
+  opts: Range & { filter?: Filter } = {},
 ): Promise<Photo[]> {
-  return photos
-    .filter((p) => matches(p, opts.filter ?? 'all', opts.before))
-    .slice(offset, offset + limit);
+  return ordered(
+    photos.filter((p) => matches(p, opts.filter ?? 'all', opts.before, opts.after)),
+    opts,
+  ).slice(offset, offset + limit);
 }
 
 export async function dateRange(): Promise<{ oldest: number; newest: number } | null> {
@@ -85,8 +90,8 @@ export async function dateRange(): Promise<{ oldest: number; newest: number } | 
   return times.length ? { oldest: Math.min(...times), newest: Math.max(...times) } : null;
 }
 
-export async function burstPhotos(opts: { before?: number } = {}): Promise<Photo[]> {
-  return findBursts(photos.filter((p) => matches(p, 'photos', opts.before)));
+export async function burstPhotos(opts: Range = {}): Promise<Photo[]> {
+  return findBursts(ordered(photos.filter((p) => matches(p, 'photos', opts.before, opts.after)), opts));
 }
 
 export async function videoUri(_id: string): Promise<string> {

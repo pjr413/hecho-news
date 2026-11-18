@@ -110,6 +110,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   const loadingRef = useRef(false);
   const viewRef = useRef<MediaView>('all');
   const jumpRef = useRef<{ before: number; label: string } | null>(null);
+  const oldestRef = useRef(false);
   /** Bumped whenever the view changes, so a load that was already under way is thrown away. */
   const viewToken = useRef(0);
   const topCard = useRef<PhotoCardHandle>(null);
@@ -207,10 +208,14 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
       const known = new Set<string>(reviewed);
       pending.forEach((d) => known.add(d.photo.id));
       photosRef.current.forEach((p) => known.add(p.id));
-      const before = jumpRef.current?.before;
+      // Jumping to a month: newest-first continues from its end, oldest-first from its start.
+      const end = jumpRef.current?.before;
+      const oldestFirst = oldestRef.current;
+      const monthStart = end === undefined ? undefined : new Date(new Date(end + 1).getFullYear(), new Date(end + 1).getMonth() - 1, 1).getTime();
+      const range = oldestFirst ? { after: monthStart, oldestFirst } : { before: end, oldestFirst };
       if (viewRef.current === 'bursts') {
         // Near-duplicates are found by looking at the whole library at once.
-        const list = await library.burstPhotos({ before });
+        const list = await library.burstPhotos(range);
         if (token !== viewToken.current) return;
         setExhausted(true);
         setPhotos((q) => [...q, ...list.filter((p) => !known.has(p.id))]);
@@ -221,7 +226,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
       while (fresh.length < 20 && !done) {
         const page = await library.fetchPage(offsetRef.current, PAGE, {
           filter: viewRef.current as Filter,
-          before,
+          ...range,
         });
         if (token !== viewToken.current) return;
         offsetRef.current += page.length;
@@ -273,6 +278,14 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
     },
     [reload],
   );
+
+  // The saved order is only known once the store has loaded; switch to it then.
+  useEffect(() => {
+    if (store.ready && store.oldestFirst !== oldestRef.current) {
+      oldestRef.current = store.oldestFirst;
+      applyView(viewRef.current, jumpRef.current);
+    }
+  }, [store.ready, store.oldestFirst, applyView]);
 
   const current = photos[index];
   const hasPrev = index > 0;
@@ -920,6 +933,11 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         onView={(v) => {
           setOptionsOpen(false);
           applyView(v, jumpRef.current);
+        }}
+        oldestFirst={store.oldestFirst}
+        onOrder={(oldest) => {
+          setOptionsOpen(false);
+          store.setFlag('oldestFirst', oldest);
         }}
         advanced={library.advancedQueries}
         screenshots={library.screenshotFilter}

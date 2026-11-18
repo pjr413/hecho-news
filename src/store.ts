@@ -42,6 +42,8 @@ type Saved = {
   tourSeen: boolean;
   /** Has the games table been unlocked in Options? */
   gamesUnlocked: boolean;
+  /** Show the oldest photos first instead of the newest. */
+  oldestFirst: boolean;
   /** How many rows of album spots are showing (1 to MAX_ROWS). */
   albumRows: number;
 };
@@ -70,6 +72,7 @@ const EMPTY: Saved = {
   stats: EMPTY_STATS(),
   tourSeen: false,
   gamesUnlocked: false,
+  oldestFirst: false,
   albumRows: 1,
 };
 
@@ -106,6 +109,7 @@ export function useStore() {
             // Anyone who already has albums or decisions has found their way around.
             tourSeen: saved.tourSeen === true || (saved.reviewed ?? []).length > 0 || waiting.length > 0,
             gamesUnlocked: saved.gamesUnlocked === true,
+            oldestFirst: saved.oldestFirst === true,
             // Never fewer rows than it takes to show the albums she already has.
             albumRows: Math.min(
               MAX_ROWS,
@@ -186,7 +190,7 @@ export function useStore() {
     setState((s) => (n > s.stats.bestStreak ? { ...s, stats: { ...s.stats, bestStreak: n } } : s));
   }, []);
 
-  const setFlag = useCallback((key: 'tourSeen' | 'gamesUnlocked', value: boolean) => {
+  const setFlag = useCallback((key: 'tourSeen' | 'gamesUnlocked' | 'oldestFirst', value: boolean) => {
     setState((s) => ({ ...s, [key]: value }));
   }, []);
 
