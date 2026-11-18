@@ -886,6 +886,8 @@ export function OptionsSheet({
           <Pressable
             style={styles.choice}
             onPress={onOpenGame}
+            onLongPress={onUnlockGames}
+            delayLongPress={3000}
             accessibilityRole="button"
             testID="open-game"
           >

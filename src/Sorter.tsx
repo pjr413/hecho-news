@@ -956,10 +956,15 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         }}
         gamesUnlocked={store.gamesUnlocked}
         onUnlockGames={() => {
-          if (store.gamesUnlocked) return;
-          store.setFlag('gamesUnlocked', true);
-          celebrate('confetti');
-          showBanner('Games table unlocked 🎲');
+          // Holding the Chess game button (or tapping the knight) opens the games table.
+          if (!store.gamesUnlocked) {
+            store.setFlag('gamesUnlocked', true);
+            celebrate('confetti');
+            showBanner('Games table unlocked 🎲');
+          } else {
+            setOptionsOpen(false);
+            setTableOpen(true);
+          }
         }}
         onOpenGames={() => {
           setOptionsOpen(false);
