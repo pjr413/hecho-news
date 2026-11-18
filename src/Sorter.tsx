@@ -906,7 +906,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         album={viewSlot !== null ? (slots[viewSlot] ?? null) : null}
         onRemove={() => {
           if (viewSlot !== null) {
-            setStatus(`Removed ${slots[viewSlot]?.name ?? 'the album'} from Photo Sorter`);
+            setStatus(`Removed ${slots[viewSlot]?.name ?? 'the album'} from Tidy`);
             removeSlot(viewSlot);
           }
           setViewSlot(null);

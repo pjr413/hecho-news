@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Photo Sorter",
+    "name": "Tidy",
     "slug": "photo-sorter",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -27,8 +27,8 @@
       [
         "expo-media-library",
         {
-          "photosPermission": "Photo Sorter shows your photos so you can sort them into albums and delete the ones you don\u2019t want.",
-          "savePhotosPermission": "Photo Sorter adds the photos you keep to your albums.",
+          "photosPermission": "Tidy shows your photos so you can sort them into albums and delete the ones you don\u2019t want.",
+          "savePhotosPermission": "Tidy adds the photos you keep to your albums.",
           "granularPermissions": [
             "photo"
           ]

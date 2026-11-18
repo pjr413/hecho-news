@@ -1,4 +1,4 @@
-# Photo Sorter
+# Tidy
 
 A small phone app for clearing out a photo library one picture at a time.
 
@@ -12,7 +12,7 @@ A small phone app for clearing out a photo library one picture at a time.
   do the same). There's no Save step. **Undo** takes the latest one back out (on iPhone;
   Android doesn't let an app take a photo out of an album)
 - **Hold an album for one second** – opens it: you see what's in it, and can **Remove it from
-  Photo Sorter** (it only stops showing in the app) or **Delete the album** from the phone,
+  Tidy** (it only stops showing in the app) or **Delete the album** from the phone,
   which asks first. On iPhone deleting an album keeps its photos in your library; on Android
   the photos in it are deleted too, and the confirmation says so
 - **Options** (the gear at the top) – **Choose album types to create** (Family, Friends,

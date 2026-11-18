@@ -320,7 +320,7 @@ export function AlbumView({
 }: {
   visible: boolean;
   album: AlbumRef | null;
-  /** Takes it out of Photo Sorter only. */
+  /** Takes it out of Tidy only. */
   onRemove: () => void;
   /** Really deletes the album from the phone. Rejects if it couldn't. */
   onDelete: () => Promise<void>;
@@ -359,7 +359,7 @@ export function AlbumView({
   const confirmText =
     Platform.OS === 'android'
       ? `“${name}” and ${what} will be deleted from your phone. This can’t be undone.`
-      : `“${name}” will be deleted from the Photos app on your phone. ${what[0].toUpperCase()}${what.slice(1)} won’t be deleted: they stay in your library. It will also be removed from Photo Sorter.`;
+      : `“${name}” will be deleted from the Photos app on your phone. ${what[0].toUpperCase()}${what.slice(1)} won’t be deleted: they stay in your library. It will also be removed from Tidy.`;
 
   const doDelete = async () => {
     setDeleting(true);
@@ -449,10 +449,10 @@ export function AlbumView({
               accessibilityRole="button"
               testID="album-remove"
             >
-              <Text style={styles.buttonText}>Remove from Photo Sorter</Text>
+              <Text style={styles.buttonText}>Remove from Tidy</Text>
             </Pressable>
             <Text style={styles.footnote}>
-              Removing only takes it out of Photo Sorter. The album and its photos stay on your
+              Removing only takes it out of Tidy. The album and its photos stay on your
               phone.
             </Text>
             {id && (
