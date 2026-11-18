@@ -40,7 +40,7 @@ export const screenshotFilter = true;
  * Views that aren't offered yet. Each one needs a kind of query that hasn't been tried on a real
  * iPhone, so they are switched on one at a time, in separate updates.
  */
-export const hiddenViews: View[] = ['live', 'panoramas', 'big'];
+export const hiddenViews: View[] = ['big'];
 
 function toAccess(res: PermissionResponse): Access {
   if (!res.granted) return 'none';
