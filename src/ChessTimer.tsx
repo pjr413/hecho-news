@@ -135,8 +135,6 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
   /** True when we paused the clock just to show a panel, so closing it should resume. */
   const resumeAfter = useRef(false);
   const lastTick = useRef(0);
-  /** Time each player had left when they last passed the turn (only used when carrying over). */
-  const [carry, setCarry] = useState<[number, number]>([0, 0]);
   /** Delay still to run off at the start of this turn (ms), and time used this turn (ms). */
   const delayRef = useRef(0);
   const usedRef = useRef(0);
@@ -240,26 +238,18 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
         : bonusType === 'bronstein'
           ? Math.min(bonusMs, usedRef.current)
           : 0;
-    // Per turn with carry-over: the next turn is the full time plus whatever the other player
-    // had left when they finished their last one.
-    const carrying = settings.mode === 'turn' && settings.carryOver;
-    const nextTurn = init + (carrying ? Math.min(carry[other], CARRY_MAX_MS) : 0);
-    if (carrying) {
-      setCarry((c) => {
-        const n: [number, number] = [c[0], c[1]];
-        n[player] = ms[player];
-        return n;
-      });
-    }
     setActive(other);
-    if (settings.mode === 'turn' || earned > 0) {
-      setMs((prev) => {
-        const next: [number, number] = [prev[0], prev[1]];
-        if (settings.mode === 'turn') next[other] = nextTurn;
+    setMs((prev) => {
+      const next: [number, number] = [prev[0], prev[1]];
+      if (settings.mode === 'turn') {
+        // Per turn: your clock goes back to the start of a turn the moment yours ends. With
+        // carry-over, up to CARRY_MAX_MS of what you didn't use is added on top.
+        next[player] = init + (settings.carryOver ? Math.min(prev[player], CARRY_MAX_MS) : 0);
+      } else {
         next[player] += earned;
-        return next;
-      });
-    }
+      }
+      return next;
+    });
     freshTurn();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
   };
@@ -267,7 +257,6 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
   const start = () => {
     if (phase !== 'idle') return;
     setMs([init, init]);
-    setCarry([0, 0]);
     setActive(first);
     setLoser(null);
     freshTurn();
@@ -301,7 +290,6 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
     setLoser(null);
     setActive(first);
     setMs([init, init]);
-    setCarry([0, 0]);
     delayRef.current = 0;
     usedRef.current = 0;
     setDelayLeft(0);
@@ -336,10 +324,7 @@ export function ChessTimer({ onExit }: { onExit: () => void }) {
             ? `Delay ${Math.ceil(delayLeft / 1000)} s`
             : 'Tap when you’ve moved';
     } else {
-      label =
-        settings.mode === 'turn' && settings.carryOver && carry[player] > 0
-          ? `Next turn ${format(init + Math.min(carry[player], CARRY_MAX_MS))}`
-          : 'Waiting';
+      label = 'Waiting';
     }
 
     return (
