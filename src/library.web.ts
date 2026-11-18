@@ -4,6 +4,7 @@ import { findBursts, type Access, type AlbumRef, type DeviceAlbum, type Filter, 
 
 export const isDemo = true;
 export const advancedQueries = true;
+export const screenshotFilter = true;
 
 const HUES = [12, 38, 160, 200, 262, 320, 95, 345];
 

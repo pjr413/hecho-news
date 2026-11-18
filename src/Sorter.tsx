@@ -922,6 +922,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
           applyView(v, jumpRef.current);
         }}
         advanced={library.advancedQueries}
+        screenshots={library.screenshotFilter}
         jumpLabel={jump?.label ?? null}
         onOpenJump={() => {
           setOptionsOpen(false);

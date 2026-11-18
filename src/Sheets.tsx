@@ -623,6 +623,7 @@ export function OptionsSheet({
   view,
   onView,
   advanced,
+  screenshots,
   jumpLabel,
   onOpenJump,
   onClearJump,
@@ -654,6 +655,7 @@ export function OptionsSheet({
   onView: (view: MediaView) => void;
   /** Filters and jump-to-date are available (see `advancedQueries` in library.ts). */
   advanced: boolean;
+  screenshots: boolean;
   jumpLabel: string | null;
   onOpenJump: () => void;
   onClearJump: () => void;
@@ -724,7 +726,7 @@ export function OptionsSheet({
               <>
             <Text style={styles.section}>Find photos</Text>
             <View style={styles.chips}>
-              {VIEWS.map((v) => (
+              {VIEWS.filter((v) => screenshots || v.id !== "screenshots").map((v) => (
                 <Pressable
                   key={v.id}
                   style={[styles.chip, view === v.id && styles.chipOn]}

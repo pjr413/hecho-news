@@ -19,11 +19,14 @@ import { findBursts, type Access, type AlbumRef, type DeviceAlbum, type Filter, 
 export const isDemo = false;
 
 /**
- * Filters (videos, screenshots, bursts), jumping to a date and throwbacks rely on photo-library
+ * Filters (videos, bursts), jumping to a date and throwbacks rely on photo-library
  * queries that haven't been proven on a real iPhone yet. While this is false the app only runs the
  * one query it has always used, so nothing new can reach the library.
  */
-export const advancedQueries = false;
+export const advancedQueries = true;
+
+/** The screenshots filter uses a different kind of query again; it gets switched on on its own. */
+export const screenshotFilter = false;
 
 function toAccess(res: PermissionResponse): Access {
   if (!res.granted) return 'none';
@@ -84,6 +87,7 @@ async function buildQuery(filter: Filter, before?: number): Promise<Query | null
   if (filter === 'photos') q = q.eq(AssetField.MEDIA_TYPE, MediaType.IMAGE);
   else if (filter === 'videos') q = q.eq(AssetField.MEDIA_TYPE, MediaType.VIDEO);
   else if (filter === 'screenshots') {
+    if (!screenshotFilter) return null;
     q = q.eq(AssetField.MEDIA_TYPE, MediaType.IMAGE);
     if (Platform.OS === 'ios') {
       q = q.contains(AssetField.MEDIA_SUBTYPES, MediaSubtype.SCREENSHOT);
