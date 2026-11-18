@@ -622,6 +622,7 @@ export function OptionsSheet({
   onOpenGames,
   view,
   onView,
+  advanced,
   jumpLabel,
   onOpenJump,
   onClearJump,
@@ -651,6 +652,8 @@ export function OptionsSheet({
   /** What the timeline is showing, and the date it was jumped to (if any). */
   view: MediaView;
   onView: (view: MediaView) => void;
+  /** Filters and jump-to-date are available (see `advancedQueries` in library.ts). */
+  advanced: boolean;
   jumpLabel: string | null;
   onOpenJump: () => void;
   onClearJump: () => void;
@@ -717,6 +720,8 @@ export function OptionsSheet({
                 <Text style={styles.tick}>{d.id === design ? "✓" : ""}</Text>
               </Pressable>
             ))}
+            {advanced && (
+              <>
             <Text style={styles.section}>Find photos</Text>
             <View style={styles.chips}>
               {VIEWS.map((v) => (
@@ -747,6 +752,8 @@ export function OptionsSheet({
                   <Text style={styles.lineText}>Back to the newest photos</Text>
                 </View>
               </Pressable>
+            )}
+              </>
             )}
             <Pressable style={styles.choice} onPress={onShowTour} accessibilityRole="button" testID="show-tour">
               <View style={styles.choiceText}>

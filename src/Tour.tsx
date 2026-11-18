@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
-const STEPS: { emoji: string; title: string; body: string }[] = [
+import { advancedQueries } from './library';
+
+const ALL_STEPS: { emoji: string; title: string; body: string }[] = [
   {
     emoji: '👈',
     title: 'Swipe through your photos',
@@ -28,6 +30,8 @@ const STEPS: { emoji: string; title: string; body: string }[] = [
     body: 'In Options (the gear) you can show only videos or screenshots, find bursts of near-identical photos, and jump to any month.',
   },
 ];
+// The last card is about filters, which are held back until they're proven on a phone.
+const STEPS = advancedQueries ? ALL_STEPS : ALL_STEPS.slice(0, -1);
 
 /** A short walk-through of the gestures, shown the first time and from Options. */
 export function Tour({ visible, onDone }: { visible: boolean; onDone: () => void }) {

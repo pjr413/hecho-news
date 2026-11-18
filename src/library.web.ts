@@ -3,6 +3,7 @@
 import { findBursts, type Access, type AlbumRef, type DeviceAlbum, type Filter, type Photo } from './types';
 
 export const isDemo = true;
+export const advancedQueries = true;
 
 const HUES = [12, 38, 160, 200, 262, 320, 95, 345];
 

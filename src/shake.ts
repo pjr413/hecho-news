@@ -7,6 +7,14 @@ import { sensorsModule } from './optional';
 export function onShake(callback: () => void): () => void {
   const sensors = sensorsModule();
   if (!sensors) return () => {};
+  try {
+    return listen(sensors, callback);
+  } catch {
+    return () => {};
+  }
+}
+
+function listen(sensors: NonNullable<ReturnType<typeof sensorsModule>>, callback: () => void): () => void {
   const { Accelerometer } = sensors;
   Accelerometer.setUpdateInterval(80);
   let jolts = 0;

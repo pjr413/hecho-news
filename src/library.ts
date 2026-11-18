@@ -18,6 +18,13 @@ import { findBursts, type Access, type AlbumRef, type DeviceAlbum, type Filter, 
 
 export const isDemo = false;
 
+/**
+ * Filters (videos, screenshots, bursts), jumping to a date and throwbacks rely on photo-library
+ * queries that haven't been proven on a real iPhone yet. While this is false the app only runs the
+ * one query it has always used, so nothing new can reach the library.
+ */
+export const advancedQueries = false;
+
 function toAccess(res: PermissionResponse): Access {
   if (!res.granted) return 'none';
   return res.accessPrivileges === 'limited' ? 'limited' : 'all';
@@ -68,6 +75,11 @@ const toPhoto = (r: Row): Photo => ({
 
 /** Builds the query for a kind of media (and, optionally, only things at or before a time). */
 async function buildQuery(filter: Filter, before?: number): Promise<Query | null> {
+  if (!advancedQueries) {
+    return new Query()
+      .eq(AssetField.MEDIA_TYPE, MediaType.IMAGE)
+      .orderBy({ key: AssetField.CREATION_TIME, ascending: false });
+  }
   let q = new Query();
   if (filter === 'photos') q = q.eq(AssetField.MEDIA_TYPE, MediaType.IMAGE);
   else if (filter === 'videos') q = q.eq(AssetField.MEDIA_TYPE, MediaType.VIDEO);
@@ -99,6 +111,7 @@ export async function fetchPage(
 
 /** The oldest and newest times in the library (ms), or null when it's empty. */
 export async function dateRange(): Promise<{ oldest: number; newest: number } | null> {
+  if (!advancedQueries) return null;
   const base = () => new Query().within(AssetField.MEDIA_TYPE, [MediaType.IMAGE, MediaType.VIDEO]);
   const [newest] = await base()
     .orderBy({ key: AssetField.CREATION_TIME, ascending: false })
@@ -115,6 +128,7 @@ export async function dateRange(): Promise<{ oldest: number; newest: number } | 
 
 /** Photos that look like repeats: shots taken seconds apart at the same size. */
 export async function burstPhotos(opts: { before?: number } = {}): Promise<Photo[]> {
+  if (!advancedQueries) return [];
   const q = await buildQuery('photos', opts.before);
   if (!q) return [];
   const rows = await q.limit(4000).exeForMetadata();
