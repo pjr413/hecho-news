@@ -77,6 +77,20 @@ export function pieceStyle(color: Color, size: number) {
       };
 }
 
+/**
+ * A soft dark glow that sits just under a piece: a faint dark copy of it, nudged down, whose own
+ * shadow spreads into a halo. Drawn beneath the real piece so it only shows around the edges.
+ */
+function glowStyle(size: number) {
+  return {
+    color: 'rgba(0,0,0,0.3)',
+    textShadowColor: 'rgba(0,0,0,0.65)',
+    textShadowRadius: Math.max(4, size / 7),
+    textShadowOffset: { width: 0, height: 0 },
+    fontSize: size,
+  };
+}
+
 function infoOf(chess: Chess): GameInfo {
   const byWhite: PieceSymbol[] = [];
   const byBlack: PieceSymbol[] = [];
@@ -222,17 +236,29 @@ export function ChessBoard({ size, disabled, facing, resetKey, onMove, onInfo }:
                 {selected === square && <View style={[styles.fill, styles.selected]} />}
                 {checked && <View style={[styles.fill, styles.checked]} />}
                 {piece && (
-                  <Text
-                    style={[
-                      styles.piece,
-                      pieceStyle(piece.color, cell * 0.84),
-                      turned(piece.color) && styles.turnedAround,
-                    ]}
-                    allowFontScaling={false}
+                  // Black sits across the table, so (unless chosen otherwise) their pieces are
+                  // turned to face them; the glow turns with the piece so it stays under it.
+                  <View
+                    style={[styles.pieceBox, { width: cell, height: cell }, turned(piece.color) && styles.turnedAround]}
+                    pointerEvents="none"
+                    accessibilityElementsHidden
+                    importantForAccessibility="no-hide-descendants"
                     testID={`piece-${square}`}
                   >
-                    {GLYPH[piece.type]}
-                  </Text>
+                    <View style={[styles.pieceLayer, { transform: [{ translateY: cell * 0.05 }] }]}>
+                      <Text style={[styles.piece, glowStyle(cell * 0.84)]} allowFontScaling={false}>
+                        {GLYPH[piece.type]}
+                      </Text>
+                    </View>
+                    <View style={styles.pieceLayer}>
+                      <Text
+                        style={[styles.piece, pieceStyle(piece.color, cell * 0.84)]}
+                        allowFontScaling={false}
+                      >
+                        {GLYPH[piece.type]}
+                      </Text>
+                    </View>
+                  </View>
                 )}
                 {target && !target.captured && !target.flags.includes('e') && (
                   <View
@@ -297,6 +323,16 @@ const styles = StyleSheet.create({
   selected: { backgroundColor: 'rgba(255, 214, 10, 0.6)' },
   checked: { backgroundColor: 'rgba(229, 57, 53, 0.75)' },
   piece: { textAlign: 'center', includeFontPadding: false },
+  pieceBox: { alignItems: 'center', justifyContent: 'center' },
+  pieceLayer: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   turnedAround: { transform: [{ rotate: '180deg' }] },
   dot: { position: 'absolute', backgroundColor: 'rgba(20, 20, 20, 0.35)' },
   ring: {
