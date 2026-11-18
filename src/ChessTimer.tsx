@@ -151,7 +151,7 @@ function format(ms: number): string {
 
 function describe(s: Settings): string {
   if (s.mode === 'turn') {
-    return `Per turn · ${s.turnSec} seconds each${s.carryOver ? ' · carry over up to 15 s' : ''}`;
+    return `Per turn · ${s.turnSec} seconds each${s.carryOver ? ' · saves up to 15 s a turn' : ''}`;
   }
   const extra =
     s.bonusType === 'increment'
@@ -308,13 +308,18 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
         : bonusType === 'bronstein'
           ? Math.min(bonusMs, usedRef.current)
           : 0;
+    // How long this turn took, read now because the clocks below are updated a moment later.
+    const usedMs = usedRef.current;
     setActive(other);
     setMs((prev) => {
       const next: [number, number] = [prev[0], prev[1]];
       if (settings.mode === 'turn') {
         // Per turn: your clock goes back to the start of a turn the moment yours ends. With
-        // carry-over, up to CARRY_MAX_MS of what you didn't use is added on top.
-        next[player] = init + (settings.carryOver ? Math.min(prev[player], CARRY_MAX_MS) : 0);
+        // carry-over you keep a bank of saved seconds: each turn can add at most CARRY_MAX_MS to
+        // it (never more than the time you had left), and the bank keeps growing from turn to
+        // turn, so it can add up to well over a minute. Using more than a turn's time spends it.
+        const bank = Math.max(0, prev[player] + usedMs - init);
+        next[player] = init + (settings.carryOver ? Math.min(prev[player], bank + CARRY_MAX_MS) : 0);
       } else {
         next[player] += earned;
       }
@@ -1166,7 +1171,7 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
                 </View>
                 <Text style={styles.cardBody} testID="carry-blurb">
                   {settings.carryOver
-                    ? `Time you don’t use is added to your next turn, up to 15 seconds, so going faster gives you longer turns. Finish a ${value}-second turn with 10 seconds left and your next one is ${value + 10} seconds. With 15 or more left, it’s ${value + 15}.`
+                    ? `Time you don’t use is saved and added to your next turn, up to 15 seconds more each turn, and the saved time keeps adding up. Finish a ${value}-second turn with 10 seconds left and your next one is ${value + 10} seconds. Do it again and the next is ${value + 20}, and so on, even past a minute extra. Using more than a turn’s time spends what you’ve saved.`
                     : 'Every turn starts over at the full time.'}
                 </Text>
                 </>

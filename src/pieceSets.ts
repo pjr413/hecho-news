@@ -3,15 +3,7 @@ import type { PieceSymbol } from 'chess.js';
 export type PieceSetId =
   | 'classic'
   | 'outline'
-  | 'letters'
-  | 'animals'
-  | 'sea'
-  | 'space'
-  | 'medieval'
-  | 'pirates'
-  | 'spooky'
-  | 'sweets'
-  | 'sports';
+  | 'letters';
 
 /**
  * 'glyph' sets are drawn as colored text (white or black pieces). 'disc' sets are emoji, which
@@ -63,62 +55,6 @@ export const PIECE_SETS: PieceSet[] = [
     kind: 'glyph',
     blurb: 'K, Q, R, B, N and P, as in the notation.',
     glyphs: { k: 'K', q: 'Q', r: 'R', b: 'B', n: 'N', p: 'P' },
-  },
-  {
-    id: 'animals',
-    name: 'Animals',
-    kind: 'disc',
-    blurb: 'Lion, unicorn, elephant, owl, horse and mouse.',
-    glyphs: { k: '🦁', q: '🦄', r: '🐘', b: '🦉', n: '🐴', p: '🐭' },
-  },
-  {
-    id: 'sea',
-    name: 'Sea life',
-    kind: 'disc',
-    blurb: 'Whale, shark, turtle, dolphin, crab and fish.',
-    glyphs: { k: '🐋', q: '🦈', r: '🐢', b: '🐬', n: '🦀', p: '🐟' },
-  },
-  {
-    id: 'space',
-    name: 'Space',
-    kind: 'disc',
-    blurb: 'Sun, moon, rocket, saucer, comet and star.',
-    glyphs: { k: '🌞', q: '🌙', r: '🚀', b: '🛸', n: '☄️', p: '⭐' },
-  },
-  {
-    id: 'medieval',
-    name: 'Medieval',
-    kind: 'disc',
-    blurb: 'Prince, princess, castle, church, rider and guard.',
-    glyphs: { k: '🤴', q: '👸', r: '🏰', b: '⛪', n: '🏇', p: '💂' },
-  },
-  {
-    id: 'pirates',
-    name: 'Pirates',
-    kind: 'disc',
-    blurb: 'Pirate flag, parrot, ship, anchor, dagger and skull.',
-    glyphs: { k: '🏴‍☠️', q: '🦜', r: '🚢', b: '⚓', n: '🗡️', p: '💀' },
-  },
-  {
-    id: 'spooky',
-    name: 'Spooky',
-    kind: 'disc',
-    blurb: 'Pumpkin, vampire, haunted house, ghost, wolf and spider.',
-    glyphs: { k: '🎃', q: '🧛', r: '🏚️', b: '👻', n: '🐺', p: '🕷️' },
-  },
-  {
-    id: 'sweets',
-    name: 'Sweets',
-    kind: 'disc',
-    blurb: 'Cake, tart, donut, lollipop, chocolate and cupcake.',
-    glyphs: { k: '🎂', q: '🍰', r: '🍩', b: '🍭', n: '🍫', p: '🧁' },
-  },
-  {
-    id: 'sports',
-    name: 'Sports',
-    kind: 'disc',
-    blurb: 'Trophy, medal, stadium, archery, horse racing and ball.',
-    glyphs: { k: '🏆', q: '🥇', r: '🏟️', b: '🏹', n: '🏇', p: '⚽' },
   },
 ];
 

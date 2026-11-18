@@ -23,8 +23,8 @@ A small phone app for clearing out a photo library one picture at a time.
   build of the app is running
 - **Chess timer** (a button in Options) – a two-player clock. Set either a total time per
   player (with ready-made game types such as Blitz 3+2 or Rapid 15+10, and extra time: increment,
-  delay or Bronstein) or a time limit per turn (your clock resets the moment your turn ends; optionally carrying your unused time into your next turn, up to 15
-  seconds extra, so going faster gives you longer turns). Two big sides (the top one is upside down for the person
+  delay or Bronstein) or a time limit per turn (your clock resets the moment your turn ends; optionally saving your unused time: each turn can add up to 15
+  seconds to your savings, and the savings keep adding up, so going faster gives you longer turns). Two big sides (the top one is upside down for the person
   across from you), and in the middle Options, Start, Pause and Reset (Reset asks first).
   Tap a side before starting to choose who goes first; during play tap your own side when
   you've moved. The side slowly turns red from 10 seconds left down to 5, and the screen
@@ -41,8 +41,8 @@ A small phone app for clearing out a photo library one picture at a time.
   **Reset** offers two choices: reset just the time (the pieces stay where they are) or reset
   the whole game. Also: **Resign** and **Offer a draw** (the other side accepts or declines),
   **Takeback**, a scrolling **move list**, **swap sides**, and a game in progress is **saved**
-  and offered back next time. **Piece sets** – eleven looks for the pieces (Classic, Outline,
-  Letters, Animals, Sea, Space, Medieval, Pirates, Spooky, Sweets, Sports)
+  and offered back next time. **Piece sets** – three looks for the pieces (Classic, Outline,
+  Letters)
 - **Double-tap** – favorite (the phone's real Favorites)
 - **Undo** steps back the latest choice, whether it was a trash or an album drop
 
