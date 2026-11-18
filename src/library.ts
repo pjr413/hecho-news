@@ -25,8 +25,8 @@ export const isDemo = false;
  */
 export const advancedQueries = true;
 
-/** The screenshots filter uses a different kind of query again; it gets switched on on its own. */
-export const screenshotFilter = false;
+/** The screenshots filter uses a different kind of query again; it is on. */
+export const screenshotFilter = true;
 
 function toAccess(res: PermissionResponse): Access {
   if (!res.granted) return 'none';
