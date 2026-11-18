@@ -80,7 +80,7 @@ The trash bin is the one safety net for deleting photos:
 - Reaching the last photo: fireworks and "Inbox zero"
 - Hold the gear for 5 seconds: a memory-match game made from her own photos
 - On the chess board, swipe up, up, down, down, left, right, left, right: disco mode
-- Hold the Chess game button in Options for 3 seconds (or tap the ♞ 5 times): a **Games table** for two (tic-tac-toe, Connect Four,
+- Hold the Chess game button in Options for 3 seconds (or tap the ♞ 5 times): a **Games table** for two (tic-tac-toe, Connect Four, Dots & Boxes, Reversi, Gomoku,
   checkers), seated like the chess game
 
 Videos are only ever viewed here, never edited. Playing them, the shake, and keeping the screen

@@ -154,16 +154,19 @@ export function MemoryGame({ onExit }: { onExit: () => void }) {
 // ---------------------------------------------------------------- games table
 
 type Seat = 0 | 1; // 0 sits at the bottom, 1 at the top (upside down)
-type GameId = 'ttt' | 'c4' | 'checkers';
+type GameId = 'ttt' | 'c4' | 'checkers' | 'dots' | 'reversi' | 'gomoku';
 
 const GAMES: { id: GameId; name: string; icon: string }[] = [
   { id: 'ttt', name: 'Tic-tac-toe', icon: '✕○' },
   { id: 'c4', name: 'Connect Four', icon: '●●' },
   { id: 'checkers', name: 'Checkers', icon: '⛀' },
+  { id: 'dots', name: 'Dots & Boxes', icon: '▦' },
+  { id: 'reversi', name: 'Reversi', icon: '◐' },
+  { id: 'gomoku', name: 'Gomoku', icon: '⚫' },
 ];
 
 /** What a game reports back: whose turn, who has won (or a draw), and a short message. */
-type Outcome = { turn: Seat; winner: Seat | 'draw' | null };
+type Outcome = { turn: Seat; winner: Seat | 'draw' | null; /** Optional score line for each seat. */ notes?: [string, string] };
 
 export function GamesTable({ onExit }: { onExit: () => void }) {
   const insets = useSafeAreaInsets();
@@ -193,12 +196,16 @@ export function GamesTable({ onExit }: { onExit: () => void }) {
     setRound((r) => r + 1);
   };
 
-  const size = Math.min(width - 24, height - insets.top - insets.bottom - 250);
+  const size = Math.min(width - 24, height - insets.top - insets.bottom - 300);
 
   const message = (seat: Seat): string => {
     if (out.winner === 'draw') return 'It’s a draw';
     if (out.winner !== null) return out.winner === seat ? 'You win! 🎉' : 'You lost';
     return out.turn === seat ? 'Your turn' : 'Waiting…';
+  };
+  const withNote = (seat: Seat): string => {
+    const note = out.notes?.[seat];
+    return note ? `${message(seat)} · ${note}` : message(seat);
   };
 
   const bar = (seat: Seat) => (
@@ -212,7 +219,7 @@ export function GamesTable({ onExit }: { onExit: () => void }) {
     >
       <View style={[s.dot, { backgroundColor: P_COLORS[seat] }]} />
       <Text style={s.seatText} testID={`message-${seat}`}>
-        {message(seat)}
+        {withNote(seat)}
       </Text>
       <Text style={s.seatScore} testID={`score-${seat}`}>
         {score[seat]}
@@ -227,6 +234,9 @@ export function GamesTable({ onExit }: { onExit: () => void }) {
         {game === 'ttt' && <TicTacToe key={round} size={size} onState={report} />}
         {game === 'c4' && <ConnectFour key={round} size={size} onState={report} />}
         {game === 'checkers' && <Checkers key={round} size={size} onState={report} />}
+        {game === 'dots' && <DotsAndBoxes key={round} size={size} onState={report} />}
+        {game === 'reversi' && <Reversi key={round} size={size} onState={report} />}
+        {game === 'gomoku' && <Gomoku key={round} size={size} onState={report} />}
       </View>
       {bar(0)}
       <View style={s.bar}>
@@ -487,6 +497,291 @@ function Checkers({ size, onState }: GameProps) {
   );
 }
 
+// ---- gomoku: five in a row on a 13 x 13 board
+
+const GM = 13;
+
+function fiveInARow(b: (Seat | null)[], seat: Seat): boolean {
+  const at = (r: number, c: number) => (r >= 0 && r < GM && c >= 0 && c < GM ? b[r * GM + c] : null);
+  for (let r = 0; r < GM; r++)
+    for (let c = 0; c < GM; c++)
+      for (const [dr, dc] of [
+        [0, 1],
+        [1, 0],
+        [1, 1],
+        [1, -1],
+      ])
+        if ([0, 1, 2, 3, 4].every((k) => at(r + dr * k, c + dc * k) === seat)) return true;
+  return false;
+}
+
+function Gomoku({ size, onState }: GameProps) {
+  const [board, setBoard] = useState<(Seat | null)[]>(Array(GM * GM).fill(null));
+  const [turn, setTurn] = useState<Seat>(0);
+  const [winner, setWinner] = useState<Seat | 'draw' | null>(null);
+  useEffect(() => onState({ turn, winner }), [turn, winner, onState]);
+
+  const tap = (i: number) => {
+    if (winner !== null || board[i] !== null) return;
+    const next = [...board];
+    next[i] = turn;
+    setBoard(next);
+    if (fiveInARow(next, turn)) setWinner(turn);
+    else if (next.every((x) => x !== null)) setWinner('draw');
+    else setTurn(turn === 0 ? 1 : 0);
+  };
+  const cell = size / GM;
+  return (
+    <View style={[s.wrap, { width: size, height: size, backgroundColor: '#c8a165' }]}>
+      {board.map((v, i) => (
+        <Pressable
+          key={i}
+          onPress={() => tap(i)}
+          style={{ width: cell, height: cell, alignItems: 'center', justifyContent: 'center' }}
+          testID={`gm-${Math.floor(i / GM)}-${i % GM}`}
+        >
+          <View style={[s.gmLineH, { backgroundColor: 'rgba(60,40,20,.55)' }]} />
+          <View style={[s.gmLineV, { backgroundColor: 'rgba(60,40,20,.55)' }]} />
+          {v !== null && (
+            <View
+              style={{
+                width: cell * 0.82,
+                height: cell * 0.82,
+                borderRadius: cell,
+                backgroundColor: P_COLORS[v],
+                borderWidth: 1.5,
+                borderColor: 'rgba(0,0,0,.4)',
+              }}
+            />
+          )}
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+// ---- reversi
+
+const DIRS8 = [
+  [-1, -1],
+  [-1, 0],
+  [-1, 1],
+  [0, -1],
+  [0, 1],
+  [1, -1],
+  [1, 0],
+  [1, 1],
+];
+
+function startReversi(): (Seat | null)[] {
+  const b: (Seat | null)[] = Array(64).fill(null);
+  b[3 * 8 + 3] = 1;
+  b[3 * 8 + 4] = 0;
+  b[4 * 8 + 3] = 0;
+  b[4 * 8 + 4] = 1;
+  return b;
+}
+
+/** The discs that playing at `i` would flip for `seat` (empty when it isn't a legal move). */
+function reversiFlips(b: (Seat | null)[], i: number, seat: Seat): number[] {
+  if (b[i] !== null) return [];
+  const r0 = Math.floor(i / 8);
+  const c0 = i % 8;
+  const out: number[] = [];
+  for (const [dr, dc] of DIRS8) {
+    const line: number[] = [];
+    let r = r0 + dr;
+    let c = c0 + dc;
+    while (r >= 0 && r < 8 && c >= 0 && c < 8 && b[r * 8 + c] === (seat === 0 ? 1 : 0)) {
+      line.push(r * 8 + c);
+      r += dr;
+      c += dc;
+    }
+    if (line.length && r >= 0 && r < 8 && c >= 0 && c < 8 && b[r * 8 + c] === seat) out.push(...line);
+  }
+  return out;
+}
+
+const reversiMoves = (b: (Seat | null)[], seat: Seat): number[] =>
+  b.flatMap((_, i) => (reversiFlips(b, i, seat).length ? [i] : []));
+
+function Reversi({ size, onState }: GameProps) {
+  const [board, setBoard] = useState<(Seat | null)[]>(startReversi);
+  const [turn, setTurn] = useState<Seat>(0);
+  const [winner, setWinner] = useState<Seat | 'draw' | null>(null);
+  const counts: [number, number] = [board.filter((x) => x === 0).length, board.filter((x) => x === 1).length];
+  const notes: [string, string] = [`${counts[0]} – ${counts[1]}`, `${counts[1]} – ${counts[0]}`];
+  useEffect(() => onState({ turn, winner, notes }), [turn, winner, notes[0], notes[1], onState]); // eslint-disable-line react-hooks/exhaustive-deps
+  const legal = useMemo(() => reversiMoves(board, turn), [board, turn]);
+
+  const tap = (i: number) => {
+    if (winner !== null) return;
+    const flips = reversiFlips(board, i, turn);
+    if (!flips.length) return;
+    const next = [...board];
+    next[i] = turn;
+    flips.forEach((f) => (next[f] = turn));
+    setBoard(next);
+    const other: Seat = turn === 0 ? 1 : 0;
+    if (reversiMoves(next, other).length) setTurn(other);
+    else if (reversiMoves(next, turn).length) {
+      // The other side has no move and passes.
+    } else {
+      const a = next.filter((x) => x === 0).length;
+      const b = next.filter((x) => x === 1).length;
+      setWinner(a === b ? 'draw' : a > b ? 0 : 1);
+    }
+  };
+  const cell = size / 8;
+  return (
+    <View style={[s.wrap, { width: size, height: size }]}>
+      {board.map((v, i) => (
+        <Pressable
+          key={i}
+          onPress={() => tap(i)}
+          style={{
+            width: cell,
+            height: cell,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: '#2f7d4f',
+            borderWidth: 0.5,
+            borderColor: 'rgba(0,0,0,.35)',
+          }}
+          testID={`rv-${i}`}
+        >
+          {v === null && winner === null && legal.includes(i) && <View style={s.hint} />}
+          {v !== null && (
+            <View
+              style={{
+                width: cell * 0.8,
+                height: cell * 0.8,
+                borderRadius: cell,
+                backgroundColor: P_COLORS[v],
+                borderWidth: 2,
+                borderColor: 'rgba(0,0,0,.35)',
+              }}
+              testID={`rvp-${i}`}
+            />
+          )}
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+// ---- dots and boxes: 5 x 5 boxes
+
+const DB = 5;
+
+function DotsAndBoxes({ size, onState }: GameProps) {
+  // h[r][c]: the line to the right of dot (r, c); v[r][c]: the line below dot (r, c).
+  const [h, setH] = useState<boolean[][]>(() => Array.from({ length: DB + 1 }, () => Array(DB).fill(false)));
+  const [v, setV] = useState<boolean[][]>(() => Array.from({ length: DB }, () => Array(DB + 1).fill(false)));
+  const [owner, setOwner] = useState<(Seat | null)[][]>(() => Array.from({ length: DB }, () => Array(DB).fill(null)));
+  const [turn, setTurn] = useState<Seat>(0);
+  const [winner, setWinner] = useState<Seat | 'draw' | null>(null);
+  const mine = owner.flat().filter((x) => x === 0).length;
+  const theirs = owner.flat().filter((x) => x === 1).length;
+  useEffect(
+    () => onState({ turn, winner, notes: [`${mine} – ${theirs}`, `${theirs} – ${mine}`] }),
+    [turn, winner, mine, theirs, onState],
+  );
+
+  const draw = (kind: 'h' | 'v', r: number, c: number) => {
+    if (winner !== null) return;
+    if ((kind === 'h' ? h : v)[r][c]) return;
+    const nh = h.map((row) => [...row]);
+    const nv = v.map((row) => [...row]);
+    (kind === 'h' ? nh : nv)[r][c] = true;
+    const no = owner.map((row) => [...row]);
+    let scored = false;
+    for (let br = 0; br < DB; br++)
+      for (let bc = 0; bc < DB; bc++)
+        if (no[br][bc] === null && nh[br][bc] && nh[br + 1][bc] && nv[br][bc] && nv[br][bc + 1]) {
+          no[br][bc] = turn;
+          scored = true;
+        }
+    setH(nh);
+    setV(nv);
+    setOwner(no);
+    const all = no.flat();
+    if (all.every((x) => x !== null)) {
+      const a = all.filter((x) => x === 0).length;
+      const b = all.length - a;
+      setWinner(a === b ? 'draw' : a > b ? 0 : 1);
+    } else if (!scored) setTurn(turn === 0 ? 1 : 0);
+  };
+
+  const pad = 22;
+  const step = (size - pad * 2) / DB;
+  const dot = 10;
+  const thick = 7;
+  return (
+    <View style={{ width: size, height: size, backgroundColor: PANEL, borderRadius: 14 }}>
+      {owner.map((row, r) =>
+        row.map((o, c) =>
+          o === null ? null : (
+            <View
+              key={`b${r}-${c}`}
+              testID={`dab-box-${r}-${c}`}
+              style={{
+                position: 'absolute',
+                left: pad + c * step + 4,
+                top: pad + r * step + 4,
+                width: step - 8,
+                height: step - 8,
+                borderRadius: 6,
+                backgroundColor: P_COLORS[o],
+                opacity: 0.85,
+              }}
+            />
+          ),
+        ),
+      )}
+      {h.map((row, r) =>
+        row.map((on, c) => (
+          <Pressable
+            key={`h${r}-${c}`}
+            onPress={() => draw('h', r, c)}
+            testID={`dab-h-${r}-${c}`}
+            style={{ position: 'absolute', left: pad + c * step + 8, top: pad + r * step - 16, width: step - 16, height: 32, justifyContent: 'center' }}
+          >
+            <View style={{ height: thick, borderRadius: thick, backgroundColor: on ? '#F2F3F5' : 'rgba(255,255,255,.14)' }} />
+          </Pressable>
+        )),
+      )}
+      {v.map((row, r) =>
+        row.map((on, c) => (
+          <Pressable
+            key={`v${r}-${c}`}
+            onPress={() => draw('v', r, c)}
+            testID={`dab-v-${r}-${c}`}
+            style={{ position: 'absolute', left: pad + c * step - 16, top: pad + r * step + 8, width: 32, height: step - 16, alignItems: 'center' }}
+          >
+            <View style={{ width: thick, flex: 1, borderRadius: thick, backgroundColor: on ? '#F2F3F5' : 'rgba(255,255,255,.14)' }} />
+          </Pressable>
+        )),
+      )}
+      {Array.from({ length: (DB + 1) * (DB + 1) }, (_, i) => (
+        <View
+          key={`d${i}`}
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: pad + (i % (DB + 1)) * step - dot / 2,
+            top: pad + Math.floor(i / (DB + 1)) * step - dot / 2,
+            width: dot,
+            height: dot,
+            borderRadius: dot,
+            backgroundColor: '#fff',
+          }}
+        />
+      ))}
+    </View>
+  );
+}
+
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: BG, alignItems: 'center', justifyContent: 'space-between' },
   bar: {
@@ -534,6 +829,8 @@ const s = StyleSheet.create({
   c4: { flexDirection: 'row', backgroundColor: '#2c4fa8', borderRadius: 12, alignSelf: 'center', marginTop: 'auto', marginBottom: 'auto' },
   c4Cell: { alignItems: 'center', justifyContent: 'center' },
   c4Disc: {},
+  gmLineH: { position: 'absolute', left: 0, right: 0, height: 1 },
+  gmLineV: { position: 'absolute', top: 0, bottom: 0, width: 1 },
   checker: { alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: 'rgba(0,0,0,.35)' },
   hint: { position: 'absolute', width: '36%', height: '36%', borderRadius: 99, backgroundColor: 'rgba(255,255,255,.45)' },
 });
