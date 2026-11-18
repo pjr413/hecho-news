@@ -1,18 +1,22 @@
 import { Chess, type Color, type Move, type PieceSymbol, type Square } from 'chess.js';
 import * as Haptics from 'expo-haptics';
-import { useEffect, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
+import { scheduleOnRN } from 'react-native-worklets';
+
+import { PIECE_SET_BY_ID, type PieceSetId } from './pieceSets';
 
 /**
- * Which way the pieces stand: facing their own player ('each', so black's are turned toward the
- * player at the top), all upright for the player at the bottom, or all upright for the top one.
+ * Which way the pieces stand: facing their own player ('each', so the pieces of whoever sits at
+ * the top are turned toward them), all upright for the player at the bottom, or all upright for
+ * the top one.
  */
 export type Facing = 'each' | 'bottom' | 'top';
 
 /** What the rest of the screen needs to know about the game. */
-
 export type GameInfo = {
-  /** Whose move it is. White sits at the bottom, black at the top. */
+  /** Whose move it is. */
   turn: Color;
   check: boolean;
   /** Set once the game is decided: a checkmate, or a draw (with the reason). */
@@ -24,6 +28,8 @@ export type GameInfo = {
   lead: number;
   /** How many moves (half-moves) have been played. */
   moveCount: number;
+  /** Every move played, in standard notation. */
+  san: string[];
 };
 
 export const START_INFO: GameInfo = {
@@ -34,18 +40,9 @@ export const START_INFO: GameInfo = {
   capturedByBlack: [],
   lead: 0,
   moveCount: 0,
+  san: [],
 };
 
-// The solid set of symbols is used for both sides and colored in. The trailing U+FE0E asks the
-// phone to draw them as plain text, not as the colored emoji it would otherwise pick for the pawn.
-const GLYPH: Record<PieceSymbol, string> = {
-  k: '♚︎',
-  q: '♛︎',
-  r: '♜︎',
-  b: '♝︎',
-  n: '♞︎',
-  p: '♟︎',
-};
 const NAME: Record<PieceSymbol, string> = {
   k: 'king',
   q: 'queen',
@@ -60,11 +57,10 @@ const FILES = 'abcdefgh';
 const LIGHT_SQUARE = '#EEEED2';
 const DARK_SQUARE = '#769656';
 
-export function glyph(type: PieceSymbol): string {
-  return GLYPH[type];
-}
+/** The cheat code: swipe up, up, down, down, left, right, left, right. */
+const CODE = 'UUDDLRLR';
 
-export function pieceStyle(color: Color, size: number) {
+function glyphStyle(color: Color, size: number) {
   return color === 'w'
     ? {
         color: '#FFFFFF',
@@ -94,11 +90,72 @@ function glowStyle(size: number) {
   };
 }
 
+/** One piece in the chosen set, drawn to fit a square of this size. */
+export function PieceView({
+  type,
+  color,
+  set,
+  size,
+  glow = true,
+}: {
+  type: PieceSymbol;
+  color: Color;
+  set: PieceSetId;
+  size: number;
+  glow?: boolean;
+}) {
+  const def = PIECE_SET_BY_ID[set];
+  const text = def.glyphs[type];
+  if (def.kind === 'disc') {
+    const d = size * 0.86;
+    return (
+      <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+        <View
+          style={{
+            width: d,
+            height: d,
+            borderRadius: d,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: color === 'w' ? '#F6F2E7' : '#262932',
+            borderWidth: Math.max(1.5, size / 22),
+            borderColor: color === 'w' ? '#C9C2AE' : '#0C0D10',
+            boxShadow: glow ? `0px ${size * 0.06}px ${size * 0.14}px rgba(0,0,0,0.55)` : undefined,
+          }}
+        >
+          <Text allowFontScaling={false} style={[styles.piece, { fontSize: d * 0.56 }]}>
+            {text}
+          </Text>
+        </View>
+      </View>
+    );
+  }
+  const fontSize = def.id === 'letters' ? size * 0.6 : size * 0.84;
+  const weight = def.id === 'letters' ? ({ fontWeight: '800' } as const) : null;
+  return (
+    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+      {glow && (
+        <View style={[styles.layer, { transform: [{ translateY: size * 0.05 }] }]}>
+          <Text style={[styles.piece, weight, glowStyle(fontSize)]} allowFontScaling={false}>
+            {text}
+          </Text>
+        </View>
+      )}
+      <View style={styles.layer}>
+        <Text style={[styles.piece, weight, glyphStyle(color, fontSize)]} allowFontScaling={false}>
+          {text}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 function infoOf(chess: Chess): GameInfo {
   const byWhite: PieceSymbol[] = [];
   const byBlack: PieceSymbol[] = [];
   let lead = 0;
-  for (const m of chess.history({ verbose: true })) {
+  const history = chess.history({ verbose: true });
+  for (const m of history) {
     if (!m.captured) continue;
     (m.color === 'w' ? byWhite : byBlack).push(m.captured);
     lead += (m.color === 'w' ? 1 : -1) * VALUE[m.captured];
@@ -110,7 +167,9 @@ function infoOf(chess: Chess): GameInfo {
     over = { kind: 'draw', reason: 'Not enough pieces left to win' };
   } else if (chess.isThreefoldRepetition()) {
     over = { kind: 'draw', reason: 'The same position three times' };
-  } else if (chess.isDraw()) over = { kind: 'draw', reason: 'Fifty moves without a capture or pawn move' };
+  } else if (chess.isDraw()) {
+    over = { kind: 'draw', reason: 'Fifty moves without a capture or pawn move' };
+  }
   return {
     turn: chess.turn(),
     check: chess.isCheck(),
@@ -118,9 +177,19 @@ function infoOf(chess: Chess): GameInfo {
     capturedByWhite: byWhite,
     capturedByBlack: byBlack,
     lead,
-    moveCount: chess.history().length,
+    moveCount: history.length,
+    san: history.map((m) => m.san),
   };
 }
+
+export type ChessBoardHandle = {
+  /** Take back the last move. Returns false when there's nothing to take back. */
+  undo: () => boolean;
+  /** The game so far, to save it. */
+  pgn: () => string;
+  /** Load a saved game. Returns false if it couldn't be read. */
+  load: (pgn: string) => boolean;
+};
 
 type Props = {
   /** Side length of the board in points. */
@@ -131,34 +200,82 @@ type Props = {
   facing: Facing;
   /** Show where a picked piece can go (dots and rings). */
   hints: boolean;
+  /** Which set of pieces to draw. */
+  set: PieceSetId;
+  /** Black sits at the bottom instead of white. */
+  flipped: boolean;
   /** Changing this starts a fresh game. */
   resetKey: number;
   /** A legal move was just made by this color. */
   onMove: (mover: Color) => void;
+  /** A move was taken back; this is the color that had played it. */
+  onUndo: (mover: Color) => void;
   /** The game's state changed. */
   onInfo: (info: GameInfo) => void;
 };
 
-export function ChessBoard({ size, disabled, facing, hints, resetKey, onMove, onInfo }: Props) {
+export const ChessBoard = forwardRef<ChessBoardHandle, Props>(function ChessBoard(
+  { size, disabled, facing, hints, set, flipped, resetKey, onMove, onUndo, onInfo },
+  ref,
+) {
   const chess = useRef(new Chess());
   const [, redraw] = useState(0);
   const [selected, setSelected] = useState<Square | null>(null);
   const [moves, setMoves] = useState<Move[]>([]);
   const [last, setLast] = useState<{ from: Square; to: Square } | null>(null);
   const [promo, setPromo] = useState<{ from: Square; to: Square; color: Color } | null>(null);
-  const callbacks = useRef({ onMove, onInfo });
-  callbacks.current = { onMove, onInfo };
+  const [disco, setDisco] = useState(false);
+  const [hue, setHue] = useState(0);
+  const callbacks = useRef({ onMove, onUndo, onInfo });
+  callbacks.current = { onMove, onUndo, onInfo };
+
+  const lastOf = (c: Chess) => {
+    const h = c.history({ verbose: true });
+    const m = h[h.length - 1];
+    return m ? { from: m.from, to: m.to } : null;
+  };
+  const clearPicks = () => {
+    setSelected(null);
+    setMoves([]);
+    setPromo(null);
+  };
 
   // A new game.
   useEffect(() => {
     chess.current = new Chess();
-    setSelected(null);
-    setMoves([]);
+    clearPicks();
     setLast(null);
-    setPromo(null);
     redraw((n) => n + 1);
     callbacks.current.onInfo(START_INFO);
   }, [resetKey]);
+
+  useImperativeHandle(ref, () => ({
+    undo: () => {
+      const taken = chess.current.undo();
+      if (!taken) return false;
+      clearPicks();
+      setLast(lastOf(chess.current));
+      redraw((n) => n + 1);
+      callbacks.current.onUndo(taken.color);
+      callbacks.current.onInfo(infoOf(chess.current));
+      return true;
+    },
+    pgn: () => chess.current.pgn(),
+    load: (pgn: string) => {
+      try {
+        const next = new Chess();
+        next.loadPgn(pgn);
+        chess.current = next;
+      } catch {
+        return false;
+      }
+      clearPicks();
+      setLast(lastOf(chess.current));
+      redraw((n) => n + 1);
+      callbacks.current.onInfo(infoOf(chess.current));
+      return true;
+    },
+  }));
 
   const play = (from: Square, to: Square, promotion?: PieceSymbol) => {
     let made: Move;
@@ -168,9 +285,7 @@ export function ChessBoard({ size, disabled, facing, hints, resetKey, onMove, on
       return;
     }
     setLast({ from, to });
-    setSelected(null);
-    setMoves([]);
-    setPromo(null);
+    clearPicks();
     redraw((n) => n + 1);
     Haptics.selectionAsync().catch(() => {});
     callbacks.current.onMove(made.color);
@@ -201,136 +316,171 @@ export function ChessBoard({ size, disabled, facing, hints, resetKey, onMove, on
     }
   };
 
+  // The cheat code: swipes across the board, remembered for a few seconds each.
+  const swipes = useRef({ text: '', at: 0 });
+  const onSwipe = (dx: number, dy: number) => {
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 40) return;
+    const now = Date.now();
+    if (now - swipes.current.at > 4000) swipes.current.text = '';
+    swipes.current.at = now;
+    const dir = Math.abs(dy) > Math.abs(dx) ? (dy < 0 ? 'U' : 'D') : dx < 0 ? 'L' : 'R';
+    swipes.current.text = (swipes.current.text + dir).slice(-CODE.length);
+    if (swipes.current.text === CODE) {
+      swipes.current.text = '';
+      setDisco(true);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    }
+  };
+  const swipe = usePanGesture({
+    minDistance: 30,
+    onDeactivate: (e) => {
+      'worklet';
+      scheduleOnRN(onSwipe, e.translationX, e.translationY);
+    },
+  });
+
+  // Disco mode: the squares cycle through colors for ten seconds.
+  useEffect(() => {
+    if (!disco) return;
+    const spin = setInterval(() => setHue((h) => (h + 22) % 360), 140);
+    const stop = setTimeout(() => setDisco(false), 10000);
+    return () => {
+      clearInterval(spin);
+      clearTimeout(stop);
+    };
+  }, [disco]);
+
   /** Is a piece of this color drawn turned around (upside down on screen)? */
-  const turned = (color: Color) => (facing === 'top' ? true : facing === 'bottom' ? false : color === 'b');
+  const topColor: Color = flipped ? 'w' : 'b';
+  const turned = (color: Color) =>
+    facing === 'top' ? true : facing === 'bottom' ? false : color === topColor;
   const cell = Math.floor(size / 8);
   const side = cell * 8;
-  const rows = chess.current.board(); // rank 8 first
+  const data = chess.current.board(); // rank 8 first
   const kingInCheck = chess.current.isCheck() ? chess.current.turn() : null;
   const targets = new Map(moves.map((m) => [m.to, m] as const));
 
   return (
-    <View style={{ width: side, height: side }} testID="board">
-      {rows.map((row, r) => (
-        <View key={r} style={{ flexDirection: 'row' }}>
-          {row.map((piece, c) => {
-            const square = `${FILES[c]}${8 - r}` as Square;
-            const light = (r + c) % 2 === 0;
-            const target = targets.get(square);
-            const isLast = last && (last.from === square || last.to === square);
-            const checked = piece?.type === 'k' && piece.color === kingInCheck;
-            return (
-              <Pressable
-                key={square}
-                onPress={() => tap(square)}
-                style={{
-                  width: cell,
-                  height: cell,
-                  backgroundColor: light ? LIGHT_SQUARE : DARK_SQUARE,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-                accessibilityRole="button"
-                accessibilityLabel={
-                  piece
-                    ? `${piece.color === 'w' ? 'White' : 'Black'} ${NAME[piece.type]} on ${square}`
-                    : `Empty square ${square}`
-                }
-                testID={`sq-${square}`}
-              >
-                {isLast && <View style={[styles.fill, styles.lastMove]} />}
-                {selected === square && <View style={[styles.fill, styles.selected]} />}
-                {checked && <View style={[styles.fill, styles.checked]} />}
-                {piece && (
-                  // Black sits across the table, so (unless chosen otherwise) their pieces are
-                  // turned to face them; the glow turns with the piece so it stays under it.
-                  <View
-                    style={[styles.pieceBox, { width: cell, height: cell }, turned(piece.color) && styles.turnedAround]}
-                    pointerEvents="none"
-                    accessibilityElementsHidden
-                    importantForAccessibility="no-hide-descendants"
-                    testID={`piece-${square}`}
-                  >
-                    <View style={[styles.pieceLayer, { transform: [{ translateY: cell * 0.05 }] }]}>
-                      <Text style={[styles.piece, glowStyle(cell * 0.84)]} allowFontScaling={false}>
-                        {GLYPH[piece.type]}
-                      </Text>
-                    </View>
-                    <View style={styles.pieceLayer}>
-                      <Text
-                        style={[styles.piece, pieceStyle(piece.color, cell * 0.84)]}
-                        allowFontScaling={false}
-                      >
-                        {GLYPH[piece.type]}
-                      </Text>
-                    </View>
-                  </View>
-                )}
-                {hints && target && !target.captured && !target.flags.includes('e') && (
-                  <View
-                    style={[styles.dot, { width: cell * 0.3, height: cell * 0.3, borderRadius: cell }]}
-                    testID={`dot-${square}`}
-                  />
-                )}
-                {hints && target && (target.captured || target.flags.includes('e')) && (
-                  <View
-                    style={[styles.ring, { borderRadius: cell }]}
-                    testID={`dot-${square}`}
-                    pointerEvents="none"
-                  />
-                )}
-              </Pressable>
-            );
-          })}
-        </View>
-      ))}
-
-      {promo && (
-        <Pressable
-          style={styles.promoBackdrop}
-          onPress={() => setPromo(null)}
-          accessibilityLabel="Cancel promotion"
-        >
-          {/* The picker faces the player who is promoting. */}
-          <View style={[styles.promoRow, promo.color === 'b' && styles.turnedAround]}>
-            {(['q', 'r', 'b', 'n'] as const).map((type) => (
-              <Pressable
-                key={type}
-                style={[styles.promoChoice, { width: cell * 1.1, height: cell * 1.1 }]}
-                onPress={() => play(promo.from, promo.to, type)}
-                accessibilityRole="button"
-                accessibilityLabel={`Promote to ${NAME[type]}`}
-                testID={`promo-${type}`}
-              >
-                <Text
-                  style={[
-                    styles.piece,
-                    pieceStyle(promo.color, cell * 0.84),
-                    // The picker faces whoever is promoting; each piece in it still follows the
-                    // chosen direction, so it matches the pieces on the board.
-                    turned(promo.color) !== (promo.color === 'b') && styles.turnedAround,
-                  ]}
-                  allowFontScaling={false}
+    <GestureDetector gesture={swipe}>
+      <View style={{ width: side, height: side }} testID="board">
+        {Array.from({ length: 8 }, (_, r) => (
+          <View key={r} style={{ flexDirection: 'row' }}>
+            {Array.from({ length: 8 }, (_, c) => {
+              // With black at the bottom the whole board is turned around.
+              const sr = flipped ? 7 - r : r;
+              const sc = flipped ? 7 - c : c;
+              const piece = data[sr][sc];
+              const square = `${FILES[sc]}${8 - sr}` as Square;
+              const light = (sr + sc) % 2 === 0;
+              const target = targets.get(square);
+              const isLast = last && (last.from === square || last.to === square);
+              const checked = piece?.type === 'k' && piece.color === kingInCheck;
+              const base = disco
+                ? `hsl(${(hue + (r * 8 + c) * 17) % 360}, 75%, ${light ? 72 : 48}%)`
+                : light
+                  ? LIGHT_SQUARE
+                  : DARK_SQUARE;
+              return (
+                <Pressable
+                  key={square}
+                  onPress={() => tap(square)}
+                  style={{
+                    width: cell,
+                    height: cell,
+                    backgroundColor: base,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    piece
+                      ? `${piece.color === 'w' ? 'White' : 'Black'} ${NAME[piece.type]} on ${square}`
+                      : `Empty square ${square}`
+                  }
+                  testID={`sq-${square}`}
                 >
-                  {GLYPH[type]}
-                </Text>
-              </Pressable>
-            ))}
+                  {isLast && <View style={[styles.fill, styles.lastMove]} />}
+                  {selected === square && <View style={[styles.fill, styles.selected]} />}
+                  {checked && <View style={[styles.fill, styles.checked]} />}
+                  {piece && (
+                    <View
+                      style={[
+                        { width: cell, height: cell },
+                        turned(piece.color) && styles.turnedAround,
+                      ]}
+                      pointerEvents="none"
+                      accessibilityElementsHidden
+                      importantForAccessibility="no-hide-descendants"
+                      testID={`piece-${square}`}
+                    >
+                      <PieceView type={piece.type} color={piece.color} set={set} size={cell} />
+                    </View>
+                  )}
+                  {hints && target && !target.captured && !target.flags.includes('e') && (
+                    <View
+                      style={[styles.dot, { width: cell * 0.3, height: cell * 0.3, borderRadius: cell }]}
+                      testID={`dot-${square}`}
+                    />
+                  )}
+                  {hints && target && (target.captured || target.flags.includes('e')) && (
+                    <View
+                      style={[styles.ring, { borderRadius: cell }]}
+                      testID={`dot-${square}`}
+                      pointerEvents="none"
+                    />
+                  )}
+                </Pressable>
+              );
+            })}
           </View>
-        </Pressable>
-      )}
-    </View>
+        ))}
+
+        {disco && (
+          <View style={styles.discoTag} pointerEvents="none">
+            <Text style={styles.discoText} testID="disco">
+              DISCO!
+            </Text>
+          </View>
+        )}
+
+        {promo && (
+          <Pressable
+            style={styles.promoBackdrop}
+            onPress={() => setPromo(null)}
+            accessibilityLabel="Cancel promotion"
+          >
+            {/* The picker faces the player who is promoting. */}
+            <View style={[styles.promoRow, promo.color === topColor && styles.turnedAround]}>
+              {(['q', 'r', 'b', 'n'] as const).map((type) => (
+                <Pressable
+                  key={type}
+                  style={[styles.promoChoice, { width: cell * 1.1, height: cell * 1.1 }]}
+                  onPress={() => play(promo.from, promo.to, type)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Promote to ${NAME[type]}`}
+                  testID={`promo-${type}`}
+                >
+                  {/* Each piece still follows the chosen direction, so it matches the board. */}
+                  <View
+                    style={
+                      turned(promo.color) !== (promo.color === topColor) ? styles.turnedAround : null
+                    }
+                  >
+                    <PieceView type={type} color={promo.color} set={set} size={cell} glow={false} />
+                  </View>
+                </Pressable>
+              ))}
+            </View>
+          </Pressable>
+        )}
+      </View>
+    </GestureDetector>
   );
-}
+});
 
 const styles = StyleSheet.create({
   fill: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
-  lastMove: { backgroundColor: 'rgba(255, 235, 59, 0.38)' },
-  selected: { backgroundColor: 'rgba(255, 214, 10, 0.6)' },
-  checked: { backgroundColor: 'rgba(229, 57, 53, 0.75)' },
-  piece: { textAlign: 'center', includeFontPadding: false },
-  pieceBox: { alignItems: 'center', justifyContent: 'center' },
-  pieceLayer: {
+  layer: {
     position: 'absolute',
     top: 0,
     right: 0,
@@ -339,6 +489,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  lastMove: { backgroundColor: 'rgba(255, 235, 59, 0.38)' },
+  selected: { backgroundColor: 'rgba(255, 214, 10, 0.6)' },
+  checked: { backgroundColor: 'rgba(229, 57, 53, 0.75)' },
+  piece: { textAlign: 'center', includeFontPadding: false },
   turnedAround: { transform: [{ rotate: '180deg' }] },
   dot: { position: 'absolute', backgroundColor: 'rgba(20, 20, 20, 0.35)' },
   ring: {
@@ -349,6 +503,21 @@ const styles = StyleSheet.create({
     left: 2,
     borderWidth: 3,
     borderColor: 'rgba(20, 20, 20, 0.35)',
+  },
+  discoTag: {
+    position: 'absolute',
+    top: 8,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+  },
+  discoText: {
+    color: '#fff',
+    fontSize: 26,
+    fontWeight: '900',
+    letterSpacing: 4,
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowRadius: 6,
   },
   promoBackdrop: {
     position: 'absolute',

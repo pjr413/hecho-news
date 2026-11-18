@@ -1,11 +1,20 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ComponentRef } from 'react';
+import { AppState } from 'react-native';
 import type { Color } from 'chess.js';
 import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ChessBoard, glyph, pieceStyle, START_INFO, type Facing, type GameInfo } from './ChessBoard';
+import {
+  ChessBoard,
+  PieceView,
+  START_INFO,
+  type ChessBoardHandle,
+  type Facing,
+  type GameInfo,
+} from './ChessBoard';
+import { PIECE_SETS, type PieceSetId } from './pieceSets';
 import { allowSleep, keepAwake } from './keepAwake';
 
 type Mode = 'match' | 'turn';
@@ -13,6 +22,10 @@ type Phase = 'idle' | 'running' | 'paused' | 'over';
 type Player = 0 | 1; // 0 is the bottom side, 1 is the top side (upside down)
 type Bonus = 'none' | 'increment' | 'delay' | 'bronstein';
 type Settings = {
+  /** Chess game: which set of pieces to draw. */
+  pieceSet: PieceSetId;
+  /** Chess game: black sits at the bottom of the screen instead of white. */
+  blackAtBottom: boolean;
   /** Chess game: show where a picked piece can move. */
   moveHints: boolean;
   /** Chess game: which way the pieces face (see Facing). */
@@ -28,7 +41,10 @@ type Settings = {
 };
 
 const KEY = 'photo-sorter/chess-timer/v1';
+const GAME_KEY = 'photo-sorter/chess-game/v1';
 const DEFAULTS: Settings = {
+  pieceSet: 'classic',
+  blackAtBottom: false,
   moveHints: true,
   pieceFacing: 'each',
   carryOver: false,
@@ -161,10 +177,27 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
   const [first, setFirst] = useState<Player>(0);
   const [ms, setMs] = useState<[number, number]>([initialMs(DEFAULTS), initialMs(DEFAULTS)]);
   const [loser, setLoser] = useState<Player | null>(null);
-  const [panel, setPanel] = useState<null | 'options' | 'confirm'>(null);
+  const [panel, setPanel] = useState<null | 'options' | 'confirm' | 'resume'>(null);
   const [info, setInfo] = useState<GameInfo>(START_INFO);
   /** Bumped to start a fresh game on the board. */
   const [resetKey, setResetKey] = useState(0);
+  const boardRef = useRef<ChessBoardHandle>(null);
+  /** How a game ended when it wasn't decided on the board or by the clock. */
+  const [ending, setEnding] = useState<null | { kind: 'resign'; loser: Player } | { kind: 'agreed' }>(null);
+  /** Who has offered a draw, and who has tapped Resign once and has to confirm. */
+  const [drawOffer, setDrawOffer] = useState<Player | null>(null);
+  const [resignArm, setResignArm] = useState<Player | null>(null);
+  /** A saved game found on entering the game screen. */
+  const [saved, setSaved] = useState<null | {
+    pgn: string;
+    ms: [number, number];
+    active: Player;
+    blackAtBottom: boolean;
+    moves: number;
+  }>(null);
+  const movesRef = useRef<ComponentRef<typeof ScrollView>>(null);
+  /** The game so far as text, refreshed after every change, so it can still be saved on exit. */
+  const pgnRef = useRef('');
   /** True when we paused the clock just to show a panel, so closing it should resume. */
   const resumeAfter = useRef(false);
   const lastTick = useRef(0);
@@ -173,6 +206,10 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
   const usedRef = useRef(0);
   const [delayLeft, setDelayLeft] = useState(0);
   const init = initialMs(settings);
+  /** Which color sits at the bottom (player 0) and which at the top (player 1). */
+  const colorOf = (player: Player): Color =>
+    (player === 0) !== settings.blackAtBottom ? 'w' : 'b';
+  const playerOf = (color: Color): Player => (color === colorOf(0) ? 0 : 1);
   // Extra time only applies in match mode.
   const bonusType: Bonus = settings.mode === 'match' ? settings.bonusType : 'none';
   const bonusMs = bonusType === 'none' ? 0 : settings.bonusSec * 1000;
@@ -194,6 +231,10 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
           turnSec: clampValue('turn', Number(saved.turnSec) || DEFAULTS.turnSec),
           carryOver: saved.carryOver === true,
           moveHints: saved.moveHints !== false,
+          blackAtBottom: saved.blackAtBottom === true,
+          pieceSet: PIECE_SETS.some((x) => x.id === saved.pieceSet)
+            ? (saved.pieceSet as PieceSetId)
+            : 'classic',
           pieceFacing: saved.pieceFacing === 'bottom' || saved.pieceFacing === 'top' ? saved.pieceFacing : 'each',
           bonusType: (['increment', 'delay', 'bronstein'] as const).includes(
             saved.bonusType as 'increment',
@@ -297,7 +338,9 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
 
   /** A legal move was made on the board: it starts the clock, or passes it. */
   const onGameMove = (mover: Color) => {
-    const player: Player = mover === 'w' ? 0 : 1;
+    const player: Player = playerOf(mover);
+    setDrawOffer(null);
+    setResignArm(null);
     if (phase === 'idle') {
       // The first move starts the clock, running for the other side.
       const bump = settings.mode === 'match' && bonusType === 'increment' ? bonusMs : 0;
@@ -316,18 +359,133 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
   /** The game changed; a checkmate or draw stops the clock. */
   const onGameInfo = (next: GameInfo) => {
     setInfo(next);
+    pgnRef.current = boardRef.current?.pgn() ?? pgnRef.current;
     if (!next.over) return;
     setPhase('over');
     // The side to move has been checkmated.
-    setLoser(next.over.kind === 'checkmate' ? (next.turn === 'w' ? 0 : 1) : null);
+    setLoser(next.over.kind === 'checkmate' ? playerOf(next.turn) : null);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+  };
+
+  /** A move was taken back: the player who made it is to move again. */
+  const onGameUndo = (mover: Color) => {
+    setDrawOffer(null);
+    setResignArm(null);
+    if (phase === 'over' && info.over) {
+      // Taking back the move that ended the game: carry on, with the clock paused.
+      setPhase('paused');
+      setLoser(null);
+    }
+    setActive(playerOf(mover));
+  };
+
+  const canUndo = game && info.moveCount > 0 && !ending && (phase !== 'over' || !!info.over);
+
+  /** Tap Resign twice (the second tap within three seconds) to give up. */
+  const resign = (player: Player) => {
+    if (resignArm !== player) {
+      setResignArm(player);
+      setTimeout(() => setResignArm((cur) => (cur === player ? null : cur)), 3000);
+      return;
+    }
+    setResignArm(null);
+    setDrawOffer(null);
+    setEnding({ kind: 'resign', loser: player });
+    setLoser(player);
+    setPhase('over');
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+  };
+
+  const answerDraw = (accept: boolean) => {
+    setDrawOffer(null);
+    if (!accept) return;
+    setEnding({ kind: 'agreed' });
+    setLoser(null);
+    setPhase('over');
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+  };
+
+  // Keep a game in progress, so leaving the screen (or the app) doesn't lose it.
+  const latest = useRef({ ms, active, info, phase, ending, blackAtBottom: settings.blackAtBottom });
+  latest.current = { ms, active, info, phase, ending, blackAtBottom: settings.blackAtBottom };
+  const saveGame = useCallback(() => {
+    if (!game) return;
+    const cur = latest.current;
+    const pgn = pgnRef.current;
+    // An empty board is never saved (and never wipes a saved game: entering the screen starts empty).
+    if (!pgn || cur.info.moveCount === 0) return;
+    // A finished game has nothing left to resume.
+    if (cur.info.over || cur.ending || cur.phase === 'over') {
+      AsyncStorage.removeItem(GAME_KEY).catch(() => {});
+      return;
+    }
+    AsyncStorage.setItem(
+      GAME_KEY,
+      JSON.stringify({
+        pgn,
+        ms: cur.ms,
+        active: cur.active,
+        blackAtBottom: cur.blackAtBottom,
+        moves: cur.info.moveCount,
+      }),
+    ).catch(() => {});
+  }, [game]);
+  useEffect(() => {
+    if (game) saveGame();
+  }, [game, saveGame, info.moveCount, phase, ending]);
+  useEffect(() => {
+    if (!game) return;
+    const sub = AppState.addEventListener('change', (st) => {
+      if (st !== 'active') saveGame();
+    });
+    return () => {
+      sub.remove();
+      saveGame();
+    };
+  }, [game, saveGame]);
+  // On entering, offer to carry on a saved game.
+  useEffect(() => {
+    if (!game) return;
+    AsyncStorage.getItem(GAME_KEY)
+      .then((raw) => {
+        if (!raw) return;
+        const g = JSON.parse(raw);
+        if (typeof g.pgn === 'string' && g.moves > 0 && Array.isArray(g.ms)) {
+          setSaved({
+            pgn: g.pgn,
+            ms: [Number(g.ms[0]), Number(g.ms[1])],
+            active: g.active === 1 ? 1 : 0,
+            blackAtBottom: g.blackAtBottom === true,
+            moves: g.moves,
+          });
+          setPanel('resume');
+        }
+      })
+      .catch(() => {});
+  }, [game]);
+  const resumeSaved = () => {
+    if (!saved) return;
+    saveSettings({ ...settings, blackAtBottom: saved.blackAtBottom });
+    if (boardRef.current?.load(saved.pgn)) {
+      setMs(saved.ms);
+      setActive(saved.active);
+      setLoser(null);
+      setPhase('paused'); // press Resume to start the clocks again
+    }
+    setSaved(null);
+    setPanel(null);
+  };
+  const forgetSaved = () => {
+    AsyncStorage.removeItem(GAME_KEY).catch(() => {});
+    setSaved(null);
+    setPanel(null);
   };
 
   const start = () => {
     if (phase !== 'idle') return;
     setMs([init, init]);
     // In a game the clock starts for whoever is to move (it might not be white after a time reset).
-    setActive(game ? (info.turn === 'w' ? 0 : 1) : first);
+    setActive(game ? playerOf(info.turn) : first);
     setLoser(null);
     freshTurn();
     setPhase('running');
@@ -368,7 +526,7 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
       setPhase('idle');
       setLoser(null);
     }
-    setActive(info.turn === 'w' ? 0 : 1);
+    setActive(playerOf(info.turn));
   };
   const reset = () => {
     resumeAfter.current = false;
@@ -379,6 +537,10 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
     setMs([init, init]);
     setResetKey((k) => k + 1);
     setInfo(START_INFO);
+    setEnding(null);
+    setDrawOffer(null);
+    setResignArm(null);
+    AsyncStorage.removeItem(GAME_KEY).catch(() => {});
     delayRef.current = 0;
     usedRef.current = 0;
     setDelayLeft(0);
@@ -401,7 +563,14 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
       bg = lost ? '#C62828' : '#1E6B3C';
       fg = '#FFFFFF';
       label = lost ? 'Time’s up' : 'Wins on time';
-      if (game && info.over) {
+      if (game && ending) {
+        if (ending.kind === 'resign') {
+          label = ending.loser === player ? 'You resigned' : 'Opponent resigned. You win!';
+        } else {
+          bg = '#3A3F4B';
+          label = 'Draw agreed';
+        }
+      } else if (game && info.over) {
         if (info.over.kind === 'checkmate') {
           label = lost ? 'Checkmate. You lose.' : 'Checkmate. You win!';
         } else {
@@ -413,10 +582,10 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
       fg = '#E5E7EB';
       label = game
         ? info.moveCount === 0
-          ? player === 0
+          ? colorOf(player) === 'w'
             ? 'White moves first'
             : 'Black'
-          : info.turn === (player === 0 ? 'w' : 'b')
+          : info.turn === colorOf(player)
             ? 'Your move'
             : 'Waiting'
         : first === player
@@ -468,15 +637,19 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
   /** A compact player panel for the game screen: clock, status, and what they've captured. */
   const playerPanel = (player: Player) => {
     const { bg, fg, label, left } = look(player);
-    const mine: Color = player === 0 ? 'w' : 'b';
-    const theirs: Color = player === 0 ? 'b' : 'w';
+    const mine: Color = colorOf(player);
+    const theirs: Color = mine === 'w' ? 'b' : 'w';
     const taken = mine === 'w' ? info.capturedByWhite : info.capturedByBlack;
     const lead = mine === 'w' ? info.lead : -info.lead;
+    const seat = player === 0 ? 'bottom' : 'top';
+    const inPlay = (phase === 'running' || phase === 'paused') && !info.over && !ending;
+    const other: Player = player === 0 ? 1 : 0;
+    const chip = [styles.chipSmall, { borderColor: fg }];
     return (
       <View
         style={[styles.panel, { backgroundColor: bg }, player === 1 && styles.flipped]}
         accessible
-        accessibilityLabel={`${player === 0 ? 'White' : 'Black'}. ${format(left)}. ${label}`}
+        accessibilityLabel={`${mine === 'w' ? 'White' : 'Black'}. ${format(left)}. ${label}`}
         testID={player === 0 ? 'side-bottom' : 'side-top'}
       >
         <Text
@@ -494,12 +667,49 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
           </Text>
           <View style={styles.taken}>
             {taken.map((type, i) => (
-              <Text key={i} style={pieceStyle(theirs, 20)} allowFontScaling={false}>
-                {glyph(type)}
-              </Text>
+              <PieceView key={i} type={type} color={theirs} set={settings.pieceSet} size={24} glow={false} />
             ))}
             {lead > 0 && <Text style={[styles.lead, { color: fg }]}>+{lead}</Text>}
           </View>
+          {inPlay && (
+            <View style={styles.actionRow}>
+              {drawOffer === other ? (
+                <>
+                  <Text style={[styles.offerText, { color: fg }]}>Draw offered</Text>
+                  <Pressable style={chip} onPress={() => answerDraw(true)} testID={`draw-accept-${seat}`}>
+                    <Text style={[styles.chipSmallText, { color: fg }]}>Accept</Text>
+                  </Pressable>
+                  <Pressable style={chip} onPress={() => answerDraw(false)} testID={`draw-decline-${seat}`}>
+                    <Text style={[styles.chipSmallText, { color: fg }]}>Decline</Text>
+                  </Pressable>
+                </>
+              ) : (
+                <>
+                  <Pressable
+                    style={[chip, resignArm === player && styles.chipArmed]}
+                    onPress={() => resign(player)}
+                    accessibilityRole="button"
+                    testID={`resign-${seat}`}
+                  >
+                    <Text style={[styles.chipSmallText, { color: resignArm === player ? '#fff' : fg }]}>
+                      {resignArm === player ? 'Tap again to resign' : '⚑ Resign'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={[chip, drawOffer === player && styles.dim]}
+                    disabled={drawOffer === player}
+                    onPress={() => setDrawOffer(player)}
+                    accessibilityRole="button"
+                    testID={`draw-${seat}`}
+                  >
+                    <Text style={[styles.chipSmallText, { color: fg }]}>
+                      {drawOffer === player ? 'Draw offered' : '½ Draw'}
+                    </Text>
+                  </Pressable>
+                </>
+              )}
+            </View>
+          )}
         </View>
       </View>
     );
@@ -517,7 +727,16 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
       accessibilityRole="button"
       testID={opts.testID}
     >
-      <Text style={[styles.controlText, opts.primary && styles.controlPrimaryText]}>{text}</Text>
+      <Text
+        style={[
+          styles.controlText,
+          opts.primary && styles.controlPrimaryText,
+          game && { fontSize: 12 },
+        ]}
+        numberOfLines={1}
+      >
+        {text}
+      </Text>
     </Pressable>
   );
 
@@ -542,27 +761,49 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
   );
 
   const boardDisabled = phase === 'paused' || phase === 'over' || panel !== null;
-  const spaceForBoard = height - insets.top - insets.bottom - 88 - 2 * 96 - 24;
-  const boardSize = Math.max(160, Math.min(width - 16, spaceForBoard));
+  const boardSize = Math.max(160, Math.min(width - 16, height - insets.top - insets.bottom - 112 - 2 * 96 - 24));
 
   const centerBlock = (
     <View style={styles.center}>
+      {game && info.moveCount > 0 && (
+        <ScrollView
+          ref={movesRef}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          onContentSizeChange={() => movesRef.current?.scrollToEnd({ animated: false })}
+          style={styles.movesStrip}
+          contentContainerStyle={styles.movesBody}
+        >
+          <Text style={styles.moves} testID="move-list">
+            {info.san
+              .map((m, i) => (i % 2 === 0 ? `${i / 2 + 1}. ${m}` : m))
+              .join('  ')
+              .replace(/  (\d+\.)/g, '   $1')}
+          </Text>
+        </ScrollView>
+      )}
       <Text style={styles.summary} testID="timer-summary">
         {phase === 'over'
-          ? game && info.over
-            ? info.over.kind === 'checkmate'
-              ? 'Checkmate'
-              : 'Draw'
-            : 'Time’s up'
+          ? game && ending
+            ? ending.kind === 'resign'
+              ? 'Resigned'
+              : 'Draw agreed'
+            : game && info.over
+              ? info.over.kind === 'checkmate'
+                ? 'Checkmate'
+                : 'Draw'
+              : 'Time’s up'
           : describe(settings)}
       </Text>
-      <View style={styles.controls}>
+      <View style={[styles.controls, game && { gap: 6 }]}>
         {button('⚙ Options', () => openPanel('options'), { testID: 'timer-options' })}
         {button('▶ Start', start, { disabled: phase !== 'idle', primary: true, testID: 'timer-start' })}
         {button(phase === 'paused' ? '▶ Resume' : '❚❚ Pause', togglePause, {
           disabled: phase !== 'running' && phase !== 'paused',
           testID: 'timer-pause',
         })}
+        {game &&
+          button('↶ Undo', () => boardRef.current?.undo(), { disabled: !canUndo, testID: 'timer-undo' })}
         {button('■ Reset', () => openPanel('confirm'), { disabled: phase === 'idle' && !(game && info.moveCount > 0), testID: 'timer-reset' })}
       </View>
     </View>
@@ -575,12 +816,16 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
           <View style={[styles.panelWrap, { paddingTop: insets.top + 6 }]}>{playerPanel(1)}</View>
           <View style={styles.boardWrap}>
             <ChessBoard
+              ref={boardRef}
               size={boardSize}
               disabled={boardDisabled}
               facing={settings.pieceFacing}
               hints={settings.moveHints}
+              set={settings.pieceSet}
+              flipped={settings.blackAtBottom}
               resetKey={resetKey}
               onMove={onGameMove}
+              onUndo={onGameUndo}
               onInfo={onGameInfo}
             />
             {phase === 'paused' && panel === null && (
@@ -601,6 +846,29 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
           {centerBlock}
           <View style={[styles.half, { paddingBottom: insets.bottom + 10 }]}>{side(0)}</View>
         </>
+      )}
+
+      {panel === 'resume' && saved && (
+        <View style={styles.overlay}>
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Carry on your game?</Text>
+            <Text style={styles.cardBody} testID="resume-text">
+              {`You left a game after ${saved.moves} ${saved.moves === 1 ? 'move' : 'moves'}. Carry on from where it was, with the clocks paused, or start a new one.`}
+            </Text>
+            <View style={styles.cardStack}>
+              <Pressable
+                style={[styles.stackButton, styles.cardPrimary]}
+                onPress={resumeSaved}
+                testID="resume-yes"
+              >
+                <Text style={[styles.controlText, styles.controlPrimaryText]}>Carry on</Text>
+              </Pressable>
+              <Pressable style={styles.stackButton} onPress={forgetSaved} testID="resume-no">
+                <Text style={styles.controlText}>New game</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
       )}
 
       {panel === 'confirm' && (
@@ -662,6 +930,71 @@ export function ChessTimer({ onExit, game = false }: { onExit: () => void; game?
               )}
               {game && (
                 <>
+                  <Text style={styles.sectionLabel}>Pieces</Text>
+                  <View style={styles.chips}>
+                    {PIECE_SETS.map((ps) => (
+                      <Pressable
+                        key={ps.id}
+                        style={[styles.chip, settings.pieceSet === ps.id && styles.segmentOn]}
+                        onPress={() => saveSettings({ ...settings, pieceSet: ps.id })}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: settings.pieceSet === ps.id }}
+                        testID={`set-${ps.id}`}
+                      >
+                        <Text
+                          style={[styles.segmentText, settings.pieceSet === ps.id && styles.segmentTextOn]}
+                        >
+                          {ps.name}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  <View style={styles.preview} testID="set-preview">
+                    {(['k', 'q', 'r', 'b', 'n', 'p'] as const).map((t) => (
+                      <PieceView key={'w' + t} type={t} color="w" set={settings.pieceSet} size={34} />
+                    ))}
+                    {(['k', 'q', 'r', 'b', 'n', 'p'] as const).map((t) => (
+                      <PieceView key={'b' + t} type={t} color="b" set={settings.pieceSet} size={34} />
+                    ))}
+                  </View>
+                  <Text style={styles.cardBody} testID="set-blurb">
+                    {PIECE_SETS.find((x) => x.id === settings.pieceSet)?.blurb}
+                  </Text>
+                  <Text style={styles.sectionLabel}>Seats</Text>
+                  <View style={styles.segment}>
+                    {[false, true].map((blackBottom) => {
+                      const canSwap = phase === 'idle' && info.moveCount === 0;
+                      return (
+                        <Pressable
+                          key={String(blackBottom)}
+                          disabled={!canSwap}
+                          style={[
+                            styles.segmentItem,
+                            settings.blackAtBottom === blackBottom && styles.segmentOn,
+                            !canSwap && styles.dim,
+                          ]}
+                          onPress={() => saveSettings({ ...settings, blackAtBottom: blackBottom })}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected: settings.blackAtBottom === blackBottom }}
+                          testID={blackBottom ? 'seat-black' : 'seat-white'}
+                        >
+                          <Text
+                            style={[
+                              styles.segmentText,
+                              settings.blackAtBottom === blackBottom && styles.segmentTextOn,
+                            ]}
+                          >
+                            {blackBottom ? 'Black at bottom' : 'White at bottom'}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                  <Text style={styles.cardBody}>
+                    {phase === 'idle' && info.moveCount === 0
+                      ? 'Choose who sits at the bottom. The board and clocks turn around to match.'
+                      : 'You can swap seats at the start of a game. Reset the game to change them.'}
+                  </Text>
                   <Text style={styles.sectionLabel}>Piece direction</Text>
                   <View style={styles.chips}>
                     {FACING_CHOICES.map((f) => (
@@ -995,6 +1328,29 @@ const styles = StyleSheet.create({
   cardNote: { color: '#7C828E', fontSize: 13, textAlign: 'center' },
   cardButtons: { flexDirection: 'row', gap: 10 },
   cardStack: { gap: 10 },
+  preview: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    padding: 6,
+    borderRadius: 14,
+    backgroundColor: '#8A9A6B',
+  },
+  actionRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 },
+  chipSmall: {
+    height: 28,
+    paddingHorizontal: 10,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chipArmed: { backgroundColor: '#B3303C', borderColor: '#B3303C' },
+  chipSmallText: { fontSize: 12, fontWeight: '700' },
+  offerText: { fontSize: 12, fontWeight: '700' },
+  movesStrip: { maxHeight: 24 },
+  movesBody: { alignItems: 'center', paddingHorizontal: 4 },
+  moves: { color: '#C5C9D2', fontSize: 14, fontVariant: ['tabular-nums'] },
   stackButton: {
     height: 48,
     borderRadius: 24,
