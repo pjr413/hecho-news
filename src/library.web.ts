@@ -33,6 +33,7 @@ function sample(i: number, time?: number): Photo {
     uri: `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`,
     favorite: false,
     video,
+    live: !video && i % 4 === 3 ? true : undefined,
     duration: video ? 14 + i : undefined,
     time: time ?? NOW - i * 5 * DAY,
     w,
@@ -111,6 +112,10 @@ export async function duplicatePhotos(opts: Range = {}): Promise<Photo[]> {
 }
 
 export async function videoUri(_id: string): Promise<string> {
+  return '';
+}
+
+export async function liveVideoUri(_id: string): Promise<string> {
   return '';
 }
 

@@ -1,10 +1,11 @@
 import { Image } from 'expo-image';
-import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import {
   GestureDetector,
   usePanGesture,
   usePinchGesture,
+  useLongPressGesture,
   useSimultaneousGestures,
   useTapGesture,
 } from 'react-native-gesture-handler';
@@ -21,6 +22,8 @@ import Animated, {
 } from 'react-native-reanimated';
 import { scheduleOnRN, scheduleOnUI } from 'react-native-worklets';
 
+import * as library from './library';
+import { LiveClip } from './VideoPlayer';
 import { ROW_SIZE, type Action, type Photo } from './types';
 
 /** Screen measurements the card needs to know where the album tiles are. */
@@ -266,7 +269,36 @@ export const PhotoCard = forwardRef<PhotoCardHandle, Props>(function PhotoCard(
     },
   });
 
-  const gesture = useSimultaneousGestures(pan, pinchToTrash, doubleTap);
+  // Holding a Live Photo plays its clip until the finger lifts.
+  const [liveUri, setLiveUri] = useState<string | null>(null);
+  const holdToken = useRef(0);
+  const startHold = () => {
+    const token = ++holdToken.current;
+    library
+      .liveVideoUri(photo.id)
+      .then((u) => {
+        if (u && token === holdToken.current) setLiveUri(u);
+      })
+      .catch(() => {});
+  };
+  const stopHold = () => {
+    holdToken.current++;
+    setLiveUri(null);
+  };
+  const hold = useLongPressGesture({
+    enabled: active && !!photo.live && canPlay,
+    minDuration: 350,
+    onActivate: () => {
+      'worklet';
+      scheduleOnRN(startHold);
+    },
+    onFinalize: () => {
+      'worklet';
+      scheduleOnRN(stopHold);
+    },
+  });
+
+  const gesture = useSimultaneousGestures(pan, pinchToTrash, doubleTap, hold);
 
   const cardStyle = useAnimatedStyle(() => {
     const drag = interpolate(Math.abs(ty.value), [0, 240], [1, 0.42], Extrapolation.CLAMP);
@@ -303,12 +335,18 @@ export const PhotoCard = forwardRef<PhotoCardHandle, Props>(function PhotoCard(
           transition={120}
           pointerEvents="none"
         />
+        {photo.live && (
+          <View style={styles.videoBadge} pointerEvents="none">
+            <Text style={styles.badgeLabel}>◉ LIVE</Text>
+          </View>
+        )}
+        {liveUri && canPlay && <LiveClip uri={liveUri} />}
         {photo.video && (
           <View style={styles.videoBadge} pointerEvents="none">
             <Text style={styles.badgeLabel}>▶ {formatDuration(photo.duration)}</Text>
           </View>
         )}
-        {photo.video && canPlay && role === 'current' && (
+        {photo.video && role === 'current' && (
           <Pressable
             style={styles.playButton}
             onPress={onPlay}

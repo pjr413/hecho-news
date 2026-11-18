@@ -84,6 +84,7 @@ const toPhoto = (r: Row): Photo => ({
   uri: r.id,
   favorite: r.isFavorite,
   video: r.mediaType === MediaType.VIDEO,
+  live: r.mediaSubtypes?.includes(MediaSubtype.LIVE_PHOTO) || undefined,
   duration: r.duration ?? undefined,
   time: toMs(r.creationTime),
   w: r.width ?? undefined,
@@ -183,6 +184,11 @@ export async function duplicatePhotos(opts: Range = {}): Promise<Photo[]> {
 /** A file the video player can open. */
 export async function videoUri(id: string): Promise<string> {
   return new Asset(id).getUri();
+}
+
+/** The short clip that goes with a Live Photo ('' when it has none). */
+export async function liveVideoUri(id: string): Promise<string> {
+  return (await new Asset(id).getLivePhotoVideoUri()) ?? '';
 }
 
 export async function setFavorite(id: string, value: boolean): Promise<void> {

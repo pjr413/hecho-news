@@ -4,6 +4,8 @@ export type Photo = {
   favorite: boolean;
   /** A video: shows a play badge and its length. */
   video?: boolean;
+  /** A Live Photo: holding it plays its little clip. */
+  live?: boolean;
   /** Length of a video, in seconds. */
   duration?: number;
   /** When it was taken, in milliseconds. */

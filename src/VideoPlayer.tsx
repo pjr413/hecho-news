@@ -16,6 +16,24 @@ function Player({ uri }: { uri: string }) {
   return <mod.VideoView player={player} style={styles.video} nativeControls contentFit="contain" />;
 }
 
+/** A Live Photo's clip, laid over the photo while it's held. */
+export function LiveClip({ uri }: { uri: string }) {
+  const mod = videoModule()!;
+  const player = mod.useVideoPlayer(uri, (p) => {
+    p.loop = false;
+    p.play();
+  });
+  return (
+    <mod.VideoView
+      player={player}
+      style={StyleSheet.absoluteFill}
+      nativeControls={false}
+      contentFit="contain"
+      pointerEvents="none"
+    />
+  );
+}
+
 /** Plays a video from the library full screen. */
 export function VideoPlayerSheet({ photo, onClose }: { photo: Photo | null; onClose: () => void }) {
   const [uri, setUri] = useState<string | null>(null);
@@ -37,7 +55,11 @@ export function VideoPlayerSheet({ photo, onClose }: { photo: Photo | null; onCl
   return (
     <Modal visible={!!photo} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.backdrop}>
-        {failed ? (
+        {!canPlayVideo() && !library.isDemo ? (
+          <Text style={styles.message}>
+            This copy of the app can’t play videos yet. It needs the latest app build.
+          </Text>
+        ) : failed ? (
           <Text style={styles.message}>This video can’t be played here.</Text>
         ) : uri ? (
           <Player uri={uri} />
