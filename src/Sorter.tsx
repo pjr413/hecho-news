@@ -18,7 +18,7 @@ import { buildInfo } from './buildInfo';
 import { BinPeek, Confetti, StatsSheet, emojiFor, isNight, type BurstKind } from './fun';
 import { onShake } from './shake';
 import { Tour } from './Tour';
-import { VideoPlayerSheet, canPlayVideo } from './VideoPlayer';
+import { canPlayVideo } from './VideoPlayer';
 import { ChessTimer } from './ChessTimer';
 import { CompareSheet } from './Compare';
 import { ReorderScreen } from './Reorder';
@@ -91,7 +91,6 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   const [jump, setJump] = useState<{ before: number; label: string } | null>(null);
   const [jumpOpen, setJumpOpen] = useState(false);
   const [tourOpen, setTourOpen] = useState(false);
-  const [playing, setPlaying] = useState<Photo | null>(null);
   /** Photos shown side by side in "Keep which?". */
   const [comparing, setComparing] = useState<Photo[]>([]);
   const [reorderOpen, setReorderOpen] = useState(false);
@@ -786,7 +785,6 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
                   onDecide={(action) => decide(photo, action)}
                   onFavorite={() => toggleFavorite(photo)}
                   canPlay={canPlayVideo()}
-                  onPlay={() => setPlaying(photo)}
                 />,
               ]
             : [],
@@ -950,7 +948,6 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
           store.setFlag('tourSeen', true);
         }}
       />
-      <VideoPlayerSheet photo={playing} onClose={() => setPlaying(null)} />
       <RenameSheet
         visible={naming !== null}
         title="New album"

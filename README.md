@@ -71,7 +71,7 @@ The trash bin is the one safety net for deleting photos:
   picker lists recently used albums first, marked ★
 - **Jump to a date** – pick a year and month and the timeline continues from there
 - Each photo shows the date it was taken; videos show a play badge and their length, and
-  **tap the play button** to watch one. **Hold a Live Photo** to play its clip (a ◉ LIVE badge marks them)
+  **hold a video** to play it (with sound) and let go to stop. **Hold a Live Photo** to play its clip (a ◉ LIVE badge marks them)
 - **First-run tour** – four short cards the first time the app opens; **Show the tour** in
   Options plays it again
 - **App icon** – two photos with a flick-up arrow (`assets/`)

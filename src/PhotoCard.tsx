@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import {
   GestureDetector,
   usePanGesture,
@@ -61,9 +61,8 @@ type Props = {
   hoverSlot: SharedValue<number>;
   onDecide: (action: Action) => void;
   onFavorite: () => void;
-  /** Videos get a play button when this install can play them. */
+  /** Videos and Live Photos play when held, if this install can play them. */
   canPlay: boolean;
-  onPlay: () => void;
 };
 
 const FLICK_SPEED = 800;
@@ -83,7 +82,7 @@ const OUT = { duration: 210 };
 const OFFSCREEN = 1200;
 
 export const PhotoCard = forwardRef<PhotoCardHandle, Props>(function PhotoCard(
-  { photo, role, favorite, canBack, canForward, geometry, hoverSlot, onDecide, onFavorite, canPlay, onPlay },
+  { photo, role, favorite, canBack, canForward, geometry, hoverSlot, onDecide, onFavorite, canPlay },
   ref,
 ) {
   const active = role === 'current';
@@ -269,13 +268,12 @@ export const PhotoCard = forwardRef<PhotoCardHandle, Props>(function PhotoCard(
     },
   });
 
-  // Holding a Live Photo plays its clip until the finger lifts.
+  // Holding a video or a Live Photo plays it until the finger lifts.
   const [liveUri, setLiveUri] = useState<string | null>(null);
   const holdToken = useRef(0);
   const startHold = () => {
     const token = ++holdToken.current;
-    library
-      .liveVideoUri(photo.id)
+    (photo.video ? library.videoUri(photo.id) : library.liveVideoUri(photo.id))
       .then((u) => {
         if (u && token === holdToken.current) setLiveUri(u);
       })
@@ -286,7 +284,7 @@ export const PhotoCard = forwardRef<PhotoCardHandle, Props>(function PhotoCard(
     setLiveUri(null);
   };
   const hold = useLongPressGesture({
-    enabled: active && !!photo.live && canPlay,
+    enabled: active && (!!photo.live || !!photo.video) && canPlay,
     minDuration: 350,
     onActivate: () => {
       'worklet';
@@ -337,25 +335,17 @@ export const PhotoCard = forwardRef<PhotoCardHandle, Props>(function PhotoCard(
         />
         {photo.live && (
           <View style={styles.videoBadge} pointerEvents="none">
-            <Text style={styles.badgeLabel}>◉ LIVE</Text>
+            <Text style={styles.badgeLabel}>◉ LIVE{canPlay ? ' · hold to play' : ''}</Text>
           </View>
         )}
         {liveUri && canPlay && <LiveClip uri={liveUri} />}
         {photo.video && (
           <View style={styles.videoBadge} pointerEvents="none">
-            <Text style={styles.badgeLabel}>▶ {formatDuration(photo.duration)}</Text>
+            <Text style={styles.badgeLabel}>
+              ▶ {formatDuration(photo.duration)}
+              {canPlay ? ' · hold to play' : ''}
+            </Text>
           </View>
-        )}
-        {photo.video && role === 'current' && (
-          <Pressable
-            style={styles.playButton}
-            onPress={onPlay}
-            accessibilityRole="button"
-            accessibilityLabel="Play video"
-            testID="play-video"
-          >
-            <Text style={styles.playGlyph}>▶</Text>
-          </Pressable>
         )}
         {photo.time !== undefined && (
           <View style={styles.dateBadge} pointerEvents="none">
@@ -421,20 +411,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
   badgeLabel: { color: '#F2F3F5', fontSize: 13, fontWeight: '700' },
-  playButton: {
-    position: 'absolute',
-    alignSelf: 'center',
-    top: '42%',
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.85)',
-  },
-  playGlyph: { color: '#fff', fontSize: 30, marginLeft: 4 },
   heartWrap: {
     position: 'absolute',
     top: 0,
