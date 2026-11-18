@@ -15,8 +15,13 @@ import { scheduleOnRN } from 'react-native-worklets';
 import * as library from './library';
 import { PhotoCard, type Geometry, type PhotoCardHandle, type Role } from './PhotoCard';
 import { buildInfo } from './buildInfo';
+import { BinPeek, Confetti, StatsSheet, emojiFor, isNight, type BurstKind } from './fun';
+import { onShake } from './shake';
+import { Tour } from './Tour';
+import { VideoPlayerSheet, canPlayVideo } from './VideoPlayer';
 import { ChessTimer } from './ChessTimer';
-import { AlbumPicker, AlbumView, BinSheet, OptionsSheet, RenameSheet } from './Sheets';
+import { GamesTable, MemoryGame } from './Games';
+import { AlbumPicker, AlbumView, BinSheet, JumpSheet, OptionsSheet, RenameSheet } from './Sheets';
 import type { Store } from './store';
 import {
   DAY_MS,
@@ -28,10 +33,19 @@ import {
   type Action,
   type AlbumRef,
   type DeviceAlbum,
+  type Filter,
   type Photo,
+  type View as MediaView,
 } from './types';
 
 const PAGE = 200;
+const VIEW_NAMES: Record<MediaView, string> = {
+  all: 'Everything',
+  photos: 'Photos',
+  videos: 'Videos',
+  screenshots: 'Screenshots',
+  bursts: 'Bursts',
+};
 const LOW_WATER = 8;
 /** Space between the two album rows in Version 2 (matches `rowBelow` below). */
 const ROW_GAP = 6;
@@ -60,6 +74,17 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [favorites, setFavorites] = useState<Record<string, boolean>>({});
   const [status, setStatus] = useState('');
+  const [banner, setBanner] = useState<{ text: string; id: number } | null>(null);
+  const [burst, setBurst] = useState<{ kind: BurstKind; n: number }>({ kind: 'confetti', n: 0 });
+  const [statsOpen, setStatsOpen] = useState(false);
+  const [binPeek, setBinPeek] = useState(false);
+  const [night, setNight] = useState(isNight());
+  /** What the timeline shows (everything, videos, bursts...) and an optional date it was jumped to. */
+  const [view, setView] = useState<MediaView>('all');
+  const [jump, setJump] = useState<{ before: number; label: string } | null>(null);
+  const [jumpOpen, setJumpOpen] = useState(false);
+  const [tourOpen, setTourOpen] = useState(false);
+  const [playing, setPlaying] = useState<Photo | null>(null);
   /** The album spot being filled from the picker, or null. */
   const [picking, setPicking] = useState<number | null>(null);
   /** The spot getting a brand-new album (asking for its name), or null. */
@@ -69,6 +94,8 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [timerOpen, setTimerOpen] = useState(false);
   const [gameOpen, setGameOpen] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [tableOpen, setTableOpen] = useState(false);
   const [binOpen, setBinOpen] = useState(false);
   const [binBusy, setBinBusy] = useState(false);
   const [binError, setBinError] = useState<string | null>(null);
@@ -77,9 +104,14 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   photosRef.current = photos;
   const indexRef = useRef(index);
   indexRef.current = index;
-  const { push, takeBack, settle, markSeen, markFiled, setSlot, setSlotId, stateRef } = store;
+  const { push, takeBack, settle, markSeen, markFiled, setSlot, setSlotId, addStat, noteStreak, stateRef } =
+    store;
   const offsetRef = useRef(0);
   const loadingRef = useRef(false);
+  const viewRef = useRef<MediaView>('all');
+  const jumpRef = useRef<{ before: number; label: string } | null>(null);
+  /** Bumped whenever the view changes, so a load that was already under way is thrown away. */
+  const viewToken = useRef(0);
   const topCard = useRef<PhotoCardHandle>(null);
   const emptyingRef = useRef(false);
   const autoEmptiedAt = useRef(0);
@@ -167,6 +199,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   const loadMore = useCallback(async () => {
     if (loadingRef.current) return;
     loadingRef.current = true;
+    const token = viewToken.current;
     setLoading(true);
     setLoadError(null);
     try {
@@ -174,10 +207,23 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
       const known = new Set<string>(reviewed);
       pending.forEach((d) => known.add(d.photo.id));
       photosRef.current.forEach((p) => known.add(p.id));
+      const before = jumpRef.current?.before;
+      if (viewRef.current === 'bursts') {
+        // Near-duplicates are found by looking at the whole library at once.
+        const list = await library.burstPhotos({ before });
+        if (token !== viewToken.current) return;
+        setExhausted(true);
+        setPhotos((q) => [...q, ...list.filter((p) => !known.has(p.id))]);
+        return;
+      }
       const fresh: Photo[] = [];
       let done = false;
       while (fresh.length < 20 && !done) {
-        const page = await library.fetchPage(offsetRef.current, PAGE);
+        const page = await library.fetchPage(offsetRef.current, PAGE, {
+          filter: viewRef.current as Filter,
+          before,
+        });
+        if (token !== viewToken.current) return;
         offsetRef.current += page.length;
         for (const p of page) if (!known.has(p.id)) fresh.push(p);
         done = page.length < PAGE;
@@ -185,10 +231,12 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
       setExhausted(done);
       setPhotos((q) => [...q, ...fresh]);
     } catch (e) {
-      setLoadError(e instanceof Error ? e.message : String(e));
+      if (token === viewToken.current) setLoadError(e instanceof Error ? e.message : String(e));
     } finally {
-      loadingRef.current = false;
-      setLoading(false);
+      if (token === viewToken.current) {
+        loadingRef.current = false;
+        setLoading(false);
+      }
     }
   }, [stateRef]);
 
@@ -202,6 +250,9 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   }, [loadMore]);
 
   const reload = useCallback(() => {
+    viewToken.current += 1;
+    loadingRef.current = false;
+    setLoading(false);
     offsetRef.current = 0;
     setPhotos([]);
     photosRef.current = [];
@@ -210,9 +261,75 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
     setLoadError(null);
   }, []);
 
+  /** Change what the timeline shows, and start it again from the top. */
+  const applyView = useCallback(
+    (next: MediaView, nextJump: { before: number; label: string } | null) => {
+      viewRef.current = next;
+      jumpRef.current = nextJump;
+      finale.current = false;
+      setView(next);
+      setJump(nextJump);
+      reload();
+    },
+    [reload],
+  );
+
   const current = photos[index];
   const hasPrev = index > 0;
   const hasNext = index + 1 < photos.length;
+
+  const bannerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** A short message that floats at the top for a few seconds. */
+  const showBanner = useCallback((text: string, ms = 3500) => {
+    if (bannerTimer.current) clearTimeout(bannerTimer.current);
+    setBanner({ text, id: Date.now() });
+    bannerTimer.current = setTimeout(() => setBanner(null), ms);
+  }, []);
+  const celebrate = useCallback((kind: BurstKind) => setBurst((b) => ({ kind, n: b.n + 1 })), []);
+
+  /** Shake: land on a random moment from the past. */
+  const throwback = useCallback(async () => {
+    try {
+      const range = await library.dateRange();
+      if (!range) return;
+      const d = new Date(range.oldest + Math.random() * (range.newest - range.oldest));
+      const name = d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+      applyView(viewRef.current, {
+        before: new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime() - 1,
+        label: `Throwback ${name}`,
+      });
+      showBanner(`Throwback to ${name}`, 4500);
+      buzz('thud');
+    } catch {
+      // No library to look at: nothing to throw back to.
+    }
+  }, [applyView, showBanner]);
+  useEffect(() => onShake(throwback), [throwback]);
+
+  // The first time the app is opened, a short tour.
+  useEffect(() => {
+    if (store.ready && !store.tourSeen) {
+      const id = setTimeout(() => setTourOpen(true), 600);
+      return () => clearTimeout(id);
+    }
+  }, [store.ready, store.tourSeen]);
+
+
+  /** Counts a photo dealt with, keeps the streak, and says something every hundred in a row. */
+  const streak = useRef({ count: 0, at: 0 });
+  const noteProgress = useCallback(
+    (kind: 'trashed' | 'filed' | 'passed') => {
+      const now = Date.now();
+      const st = streak.current;
+      st.count = now - st.at > 20000 ? 1 : st.count + 1;
+      st.at = now;
+      addStat('sorted');
+      if (kind !== 'passed') addStat(kind);
+      noteStreak(st.count);
+      if (st.count % 100 === 0) showBanner('Does it spark joy?', 4500);
+    },
+    [addStat, noteStreak, showBanner],
+  );
 
   const putBack = useCallback(
     (photoId?: string) => {
@@ -238,6 +355,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
     (photo: Photo, action: Action) => {
       if (action.type === 'next') {
         markSeen(photo.id);
+        noteProgress('passed');
         setIndex((i) => Math.min(i + 1, photosRef.current.length));
         return;
       }
@@ -250,6 +368,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
       push(photo, action);
       buzz('thud');
       if (action.type === 'trash') {
+        noteProgress('trashed');
         setStatus('Moved to trash bin');
         return;
       }
@@ -257,6 +376,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
       const slot = action.slot;
       const chosen = stateRef.current.slots[slot];
       if (!chosen) return;
+      noteProgress('filed');
       setStatus(`Added to ${chosen.name}`);
       enqueue(async () => {
         // Use the freshest copy of the album: it may have just been given its id.
@@ -272,7 +392,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         }
       });
     },
-    [push, markSeen, markFiled, setSlotId, enqueue, putBack, stateRef],
+    [push, markSeen, markFiled, setSlotId, enqueue, putBack, noteProgress, stateRef],
   );
 
   /** Undo the latest choice. A photo already filed is taken back out of its album first. */
@@ -303,17 +423,30 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
     else setIndex((i) => Math.max(0, i - 1));
   }, []);
 
+  /** Taps of the heart on one photo, for the hearts-rain surprise. */
+  const heartTaps = useRef({ id: '', n: 0, at: 0 });
   const toggleFavorite = useCallback(
     (photo: Photo) => {
       const was = favorites[photo.id] ?? photo.favorite;
       setFavorites((f) => ({ ...f, [photo.id]: !was }));
       setStatus(was ? 'Removed from favorites' : 'Favorited');
+      if (!was) addStat('favorited');
+      const now = Date.now();
+      const h = heartTaps.current;
+      h.n = h.id === photo.id && now - h.at < 8000 ? h.n + 1 : 1;
+      h.id = photo.id;
+      h.at = now;
+      if (h.n >= 5) {
+        h.n = 0;
+        celebrate('hearts');
+        setStatus('So much love ♥');
+      }
       library.setFavorite(photo.id, !was).catch(() => {
         setFavorites((f) => ({ ...f, [photo.id]: was }));
         setStatus("Couldn't change favorite");
       });
     },
-    [favorites],
+    [favorites, addStat, celebrate],
   );
 
   /** Really deletes photos from the phone. The system asks her to confirm, once per batch. */
@@ -370,6 +503,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         key={slot}
         slot={slot}
         name={album.name}
+        emoji={emojiFor(album.name)}
         hoverSlot={hoverSlot}
         onPress={() => topCard.current?.send({ type: 'album', slot })}
         onLongPress={() => {
@@ -455,9 +589,47 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
   const rowList = (from: number, count: number) =>
     Array.from({ length: count }, (_, k) => row(from + k, k === 0));
 
+  // Between midnight and 4am the screen dims, and the first time it's opened then, it says goodnight.
+  useEffect(() => {
+    const tick = () => setNight(isNight());
+    const id = setInterval(tick, 60000);
+    const sub = AppState.addEventListener('change', (st) => st === 'active' && tick());
+    return () => {
+      clearInterval(id);
+      sub.remove();
+    };
+  }, []);
+  const greetedNight = useRef(false);
+  useEffect(() => {
+    if (night && !greetedNight.current) {
+      greetedNight.current = true;
+      showBanner('Go to sleep. The photos will still be here.', 6500);
+    }
+  }, [night, showBanner]);
+
+  // Reaching the end of the whole library: fireworks.
+  const finale = useRef(false);
+  useEffect(() => {
+    if (
+      !current &&
+      exhausted &&
+      photos.length > 0 &&
+      !loadError &&
+      !finale.current &&
+      view === 'all' &&
+      !jump
+    ) {
+      finale.current = true;
+      celebrate('fireworks');
+      showBanner('Inbox zero! Every photo is sorted.', 5500);
+    }
+  }, [current, exhausted, photos.length, loadError, view, jump, celebrate, showBanner]);
+
   // The chess timer takes over the whole screen; this screen keeps its place underneath.
   if (timerOpen) return <ChessTimer onExit={() => setTimerOpen(false)} />;
   if (gameOpen) return <ChessTimer game onExit={() => setGameOpen(false)} />;
+  if (memoryOpen) return <MemoryGame onExit={() => setMemoryOpen(false)} />;
+  if (tableOpen) return <GamesTable onExit={() => setTableOpen(false)} />;
 
   return (
     <View
@@ -482,9 +654,23 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         >
           <Text style={styles.pillText}>Undo</Text>
         </Pressable>
-        <Text style={styles.status} numberOfLines={1}>
-          {status || (library.isDemo ? 'Preview with sample photos' : '')}
-        </Text>
+        {view !== 'all' || jump ? (
+          <Pressable
+            style={styles.viewChip}
+            onPress={() => applyView('all', null)}
+            accessibilityRole="button"
+            accessibilityLabel="Show everything again"
+            testID="clear-view"
+          >
+            <Text style={styles.viewChipText} numberOfLines={1}>
+              ✕ {[view !== 'all' ? VIEW_NAMES[view] : null, jump?.label].filter(Boolean).join(' · ')}
+            </Text>
+          </Pressable>
+        ) : (
+          <Text style={styles.status} numberOfLines={1}>
+            {status || (library.isDemo ? 'Preview with sample photos' : '')}
+          </Text>
+        )}
         <Pressable
           style={styles.pill}
           onPress={() => {
@@ -492,6 +678,8 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
             setBinOpen(true);
           }}
           accessibilityRole="button"
+          onLongPress={() => setBinPeek(true)}
+          delayLongPress={600}
           accessibilityLabel={`Trash bin, ${trashCount} photos`}
           testID="bin"
         >
@@ -500,6 +688,8 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         <Pressable
           style={styles.iconButton}
           onPress={() => setOptionsOpen(true)}
+          onLongPress={() => setMemoryOpen(true)}
+          delayLongPress={5000}
           accessibilityRole="button"
           accessibilityLabel="Options"
           testID="options"
@@ -551,6 +741,8 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
                   hoverSlot={hoverSlot}
                   onDecide={(action) => decide(photo, action)}
                   onFavorite={() => toggleFavorite(photo)}
+                  canPlay={canPlayVideo()}
+                  onPlay={() => setPlaying(photo)}
                 />,
               ]
             : [],
@@ -659,6 +851,33 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         }}
         onClose={() => setPicking(null)}
       />
+      <Confetti burst={burst.n} kind={burst.kind} />
+      {banner && (
+        <View style={[styles.banner, { top: insets.top + 58 }]} pointerEvents="none">
+          <Text style={styles.bannerText} testID="banner">
+            {banner.text}
+          </Text>
+        </View>
+      )}
+      {night && <View style={styles.nightDim} pointerEvents="none" testID="night-dim" />}
+      <BinPeek visible={binPeek} count={trashCount} onClose={() => setBinPeek(false)} />
+      <StatsSheet visible={statsOpen} stats={store.stats} onClose={() => setStatsOpen(false)} />
+      <JumpSheet
+        visible={jumpOpen}
+        onPick={(before, label) => {
+          setJumpOpen(false);
+          applyView(viewRef.current, { before, label });
+        }}
+        onClose={() => setJumpOpen(false)}
+      />
+      <Tour
+        visible={tourOpen}
+        onDone={() => {
+          setTourOpen(false);
+          store.setFlag('tourSeen', true);
+        }}
+      />
+      <VideoPlayerSheet photo={playing} onClose={() => setPlaying(null)} />
       <RenameSheet
         visible={naming !== null}
         title="New album"
@@ -697,6 +916,39 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
         onAutoFill={autoFill}
         chosen={slots.flatMap((a) => (a ? [a.name.toLowerCase()] : []))}
         onToggleType={toggleType}
+        view={view}
+        onView={(v) => {
+          setOptionsOpen(false);
+          applyView(v, jumpRef.current);
+        }}
+        jumpLabel={jump?.label ?? null}
+        onOpenJump={() => {
+          setOptionsOpen(false);
+          setTimeout(() => setJumpOpen(true), 350);
+        }}
+        onClearJump={() => {
+          setOptionsOpen(false);
+          applyView(viewRef.current, null);
+        }}
+        onShowTour={() => {
+          setOptionsOpen(false);
+          setTimeout(() => setTourOpen(true), 350);
+        }}
+        gamesUnlocked={store.gamesUnlocked}
+        onUnlockGames={() => {
+          if (store.gamesUnlocked) return;
+          store.setFlag('gamesUnlocked', true);
+          celebrate('confetti');
+          showBanner('Games table unlocked 🎲');
+        }}
+        onOpenGames={() => {
+          setOptionsOpen(false);
+          setTableOpen(true);
+        }}
+        onSecret={() => {
+          setOptionsOpen(false);
+          setTimeout(() => setStatsOpen(true), 350);
+        }}
         rows={rows}
         minRows={rowsNeeded(slots)}
         onRows={store.setAlbumRows}
@@ -726,6 +978,7 @@ export function Sorter({ store, access }: { store: Store; access: Access }) {
 function Tile({
   slot,
   name,
+  emoji,
   hoverSlot,
   onPress,
   onLongPress,
@@ -733,6 +986,7 @@ function Tile({
 }: {
   slot: number;
   name: string;
+  emoji: string | null;
   hoverSlot: SharedValue<number>;
   onPress: () => void;
   onLongPress: () => void;
@@ -752,12 +1006,24 @@ function Tile({
   const label = useAnimatedStyle(() => ({
     color: hoverSlot.value === slot ? '#101114' : '#F2F3F5',
   }));
+  // The emoji hops up and tilts when a photo is held over the album.
+  const bounce = useAnimatedStyle(() => ({
+    transform: [
+      { scale: withTiming(hoverSlot.value === slot ? 1.5 : 1, { duration: 140 }) },
+      { rotate: hoverSlot.value === slot ? '-12deg' : '0deg' },
+    ],
+  }));
   return (
     <Animated.View style={[styles.tile, { borderColor: color, height }, style]}>
       {/* Fills across while the album is held, so the long wait is visible. */}
       <View style={styles.holdWrap} pointerEvents="none">
         <Animated.View style={[styles.holdFill, fill]} />
       </View>
+      {emoji && (
+        <Animated.Text style={[styles.tileEmoji, bounce]} testID={`emoji-${slot}`}>
+          {emoji}
+        </Animated.Text>
+      )}
       <Pressable
         style={styles.tilePress}
         // Only a quick tap files the photo, so letting go part-way through a hold does nothing.
@@ -824,6 +1090,15 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   status: { flex: 1, textAlign: 'center', color: '#A9AEB8', fontSize: 14 },
+  viewChip: {
+    flex: 1,
+    height: 34,
+    borderRadius: 17,
+    paddingHorizontal: 12,
+    justifyContent: 'center',
+    backgroundColor: '#2A2D37',
+  },
+  viewChipText: { color: '#F2F3F5', fontSize: 13, fontWeight: '700', textAlign: 'center' },
   pill: {
     minWidth: 64,
     height: 38,
@@ -877,7 +1152,28 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   holdFill: { height: '100%', backgroundColor: 'rgba(229,57,53,0.45)' },
-  tilePress: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
+  tileEmoji: { position: 'absolute', top: 2, left: 0, right: 0, textAlign: 'center', fontSize: 14, zIndex: 2 },
+  banner: {
+    position: 'absolute',
+    alignSelf: 'center',
+    maxWidth: '88%',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 22,
+    backgroundColor: 'rgba(242,243,245,0.96)',
+    zIndex: 60,
+  },
+  bannerText: { color: '#101114', fontSize: 15, fontWeight: '700', textAlign: 'center' },
+  nightDim: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: 'rgba(0,0,12,0.3)',
+    zIndex: 40,
+  },
+  tilePress: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6, paddingTop: 4 },
   tileName: { fontSize: 14, fontWeight: '700', textAlign: 'center' },
   count: {
     position: 'absolute',

@@ -5,6 +5,7 @@ import {
   AlbumType,
   Asset,
   AssetField,
+  MediaSubtype,
   MediaType,
   Query,
   getPermissionsAsync,
@@ -13,7 +14,7 @@ import {
   type PermissionResponse,
 } from 'expo-media-library';
 
-import type { Access, AlbumRef, DeviceAlbum, Photo } from './types';
+import { findBursts, type Access, type AlbumRef, type DeviceAlbum, type Filter, type Photo } from './types';
 
 export const isDemo = false;
 
@@ -36,15 +37,93 @@ export async function chooseMorePhotos(): Promise<void> {
   await presentPermissionsPicker(['photo']);
 }
 
-/** Newest photos first. Asset ids double as image URIs (ph:// on iOS, content:// on Android). */
-export async function fetchPage(offset: number, limit: number): Promise<Photo[]> {
-  const rows = await new Query()
-    .eq(AssetField.MEDIA_TYPE, MediaType.IMAGE)
+/** The library hands back times in seconds or milliseconds depending on the phone; we use ms. */
+function toMs(t: number | null | undefined): number | undefined {
+  if (t === null || t === undefined) return undefined;
+  return t > 1e11 ? t : t * 1000;
+}
+let queryUnit: 1 | 1000 | undefined;
+async function fromMs(ms: number): Promise<number> {
+  if (queryUnit === undefined) {
+    const [newest] = await new Query()
+      .orderBy({ key: AssetField.CREATION_TIME, ascending: false })
+      .limit(1)
+      .exeForMetadata();
+    queryUnit = newest && newest.creationTime !== null && newest.creationTime > 1e11 ? 1 : 1000;
+  }
+  return ms / queryUnit;
+}
+
+type Row = Awaited<ReturnType<Query['exeForMetadata']>>[number];
+const toPhoto = (r: Row): Photo => ({
+  id: r.id,
+  uri: r.id,
+  favorite: r.isFavorite,
+  video: r.mediaType === MediaType.VIDEO,
+  duration: r.duration ?? undefined,
+  time: toMs(r.creationTime),
+  w: r.width ?? undefined,
+  h: r.height ?? undefined,
+});
+
+/** Builds the query for a kind of media (and, optionally, only things at or before a time). */
+async function buildQuery(filter: Filter, before?: number): Promise<Query | null> {
+  let q = new Query();
+  if (filter === 'photos') q = q.eq(AssetField.MEDIA_TYPE, MediaType.IMAGE);
+  else if (filter === 'videos') q = q.eq(AssetField.MEDIA_TYPE, MediaType.VIDEO);
+  else if (filter === 'screenshots') {
+    q = q.eq(AssetField.MEDIA_TYPE, MediaType.IMAGE);
+    if (Platform.OS === 'ios') {
+      q = q.contains(AssetField.MEDIA_SUBTYPES, MediaSubtype.SCREENSHOT);
+    } else {
+      // Android keeps screenshots in their own album.
+      const album = (await Album.get('Screenshots')) ?? (await Album.get('Screenshot'));
+      if (!album) return null;
+      q = q.album(album);
+    }
+  } else q = q.within(AssetField.MEDIA_TYPE, [MediaType.IMAGE, MediaType.VIDEO]);
+  if (before !== undefined) q = q.lte(AssetField.CREATION_TIME, await fromMs(before));
+  return q.orderBy({ key: AssetField.CREATION_TIME, ascending: false });
+}
+
+/** Newest first. Asset ids double as image URIs (ph:// on iOS, content:// on Android). */
+export async function fetchPage(
+  offset: number,
+  limit: number,
+  opts: { filter?: Filter; before?: number } = {},
+): Promise<Photo[]> {
+  const q = await buildQuery(opts.filter ?? 'all', opts.before);
+  if (!q) return [];
+  return (await q.limit(limit).offset(offset).exeForMetadata()).map(toPhoto);
+}
+
+/** The oldest and newest times in the library (ms), or null when it's empty. */
+export async function dateRange(): Promise<{ oldest: number; newest: number } | null> {
+  const base = () => new Query().within(AssetField.MEDIA_TYPE, [MediaType.IMAGE, MediaType.VIDEO]);
+  const [newest] = await base()
     .orderBy({ key: AssetField.CREATION_TIME, ascending: false })
-    .limit(limit)
-    .offset(offset)
+    .limit(1)
     .exeForMetadata();
-  return rows.map((r) => ({ id: r.id, uri: r.id, favorite: r.isFavorite }));
+  const [oldest] = await base()
+    .orderBy({ key: AssetField.CREATION_TIME, ascending: true })
+    .limit(1)
+    .exeForMetadata();
+  const hi = toMs(newest?.creationTime);
+  const lo = toMs(oldest?.creationTime);
+  return hi !== undefined && lo !== undefined ? { oldest: lo, newest: hi } : null;
+}
+
+/** Photos that look like repeats: shots taken seconds apart at the same size. */
+export async function burstPhotos(opts: { before?: number } = {}): Promise<Photo[]> {
+  const q = await buildQuery('photos', opts.before);
+  if (!q) return [];
+  const rows = await q.limit(4000).exeForMetadata();
+  return findBursts(rows.map(toPhoto));
+}
+
+/** A file the video player can open. */
+export async function videoUri(id: string): Promise<string> {
+  return new Asset(id).getUri();
 }
 
 export async function setFavorite(id: string, value: boolean): Promise<void> {

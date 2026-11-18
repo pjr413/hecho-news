@@ -2,7 +2,72 @@ export type Photo = {
   id: string;
   uri: string;
   favorite: boolean;
+  /** A video: shows a play badge and its length. */
+  video?: boolean;
+  /** Length of a video, in seconds. */
+  duration?: number;
+  /** When it was taken, in milliseconds. */
+  time?: number;
+  /** Pixel size, used to spot near-identical shots. */
+  w?: number;
+  h?: number;
 };
+
+/** Which kinds of media the timeline shows. 'bursts' is photos taken in quick succession. */
+export type Filter = 'all' | 'photos' | 'videos' | 'screenshots';
+export type View = Filter | 'bursts';
+
+/** Photos taken within this many milliseconds of each other, the same size, count as a burst. */
+export const BURST_GAP_MS = 4000;
+
+/**
+ * Picks out photos that look like repeats: neighbours (newest first) taken within a few seconds of
+ * each other at the same size. Photos that stand alone are dropped.
+ */
+export function findBursts(list: Photo[]): Photo[] {
+  const out: Photo[] = [];
+  let group: Photo[] = [];
+  const flush = () => {
+    if (group.length > 1) out.push(...group);
+    group = [];
+  };
+  for (const p of list) {
+    const prev = group[group.length - 1];
+    const close =
+      prev &&
+      !p.video &&
+      !prev.video &&
+      p.time !== undefined &&
+      prev.time !== undefined &&
+      Math.abs(prev.time - p.time) <= BURST_GAP_MS &&
+      prev.w === p.w &&
+      prev.h === p.h;
+    if (!close) flush();
+    group.push(p);
+  }
+  flush();
+  return out;
+}
+
+/** Running totals for the secret stats page. */
+export type Stats = {
+  sorted: number;
+  trashed: number;
+  filed: number;
+  favorited: number;
+  bestStreak: number;
+  /** When she started using the app (ms). */
+  since: number;
+};
+
+export const EMPTY_STATS = (): Stats => ({
+  sorted: 0,
+  trashed: 0,
+  filed: 0,
+  favorited: 0,
+  bestStreak: 0,
+  since: Date.now(),
+});
 
 /** An album in one of the spots. `id` is the phone's own id once known; a brand-new album has only a name until it's created on Save. */
 export type AlbumRef = { name: string; id?: string };

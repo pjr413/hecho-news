@@ -7,10 +7,12 @@ import {
   MAX_ROWS,
   rowsNeeded,
   type Design,
+  EMPTY_STATS,
   type AlbumRef,
   type Choice,
   type Decision,
   type Photo,
+  type Stats,
 } from './types';
 
 const KEY = 'photo-sorter/v1';
@@ -35,6 +37,11 @@ type Saved = {
   /** Which screen layout she picked in Options. */
   design: Design;
   slotsVersion: number;
+  stats: Stats;
+  /** Has the first-run tour been shown? */
+  tourSeen: boolean;
+  /** Has the games table been unlocked in Options? */
+  gamesUnlocked: boolean;
   /** How many rows of album spots are showing (1 to MAX_ROWS). */
   albumRows: number;
 };
@@ -60,6 +67,9 @@ const EMPTY: Saved = {
   retentionDays: DEFAULT_RETENTION_DAYS,
   design: 1,
   slotsVersion: SLOTS_VERSION,
+  stats: EMPTY_STATS(),
+  tourSeen: false,
+  gamesUnlocked: false,
   albumRows: 1,
 };
 
@@ -92,6 +102,10 @@ export function useStore() {
           setState({
             slots,
             slotsVersion: SLOTS_VERSION,
+            stats: { ...EMPTY_STATS(), ...(saved.stats ?? {}) },
+            // Anyone who already has albums or decisions has found their way around.
+            tourSeen: saved.tourSeen === true || (saved.reviewed ?? []).length > 0 || waiting.length > 0,
+            gamesUnlocked: saved.gamesUnlocked === true,
             // Never fewer rows than it takes to show the albums she already has.
             albumRows: Math.min(
               MAX_ROWS,
@@ -164,6 +178,18 @@ export function useStore() {
     }));
   }, []);
 
+  const addStat = useCallback((key: 'sorted' | 'trashed' | 'filed' | 'favorited', n = 1) => {
+    setState((s) => ({ ...s, stats: { ...s.stats, [key]: s.stats[key] + n } }));
+  }, []);
+
+  const noteStreak = useCallback((n: number) => {
+    setState((s) => (n > s.stats.bestStreak ? { ...s, stats: { ...s.stats, bestStreak: n } } : s));
+  }, []);
+
+  const setFlag = useCallback((key: 'tourSeen' | 'gamesUnlocked', value: boolean) => {
+    setState((s) => ({ ...s, [key]: value }));
+  }, []);
+
   const setAlbumRows = useCallback((rows: number) => {
     setState((s) => ({
       ...s,
@@ -179,7 +205,7 @@ export function useStore() {
     setState((s) => ({ ...s, retentionDays }));
   }, []);
 
-  return { ready, ...state, stateRef, push, takeBack, settle, markSeen, setSlot, setSlotId, setRetentionDays, setDesign, setAlbumRows, markFiled };
+  return { ready, ...state, stateRef, push, takeBack, settle, markSeen, setSlot, setSlotId, setRetentionDays, setDesign, setAlbumRows, markFiled, addStat, noteStreak, setFlag };
 }
 
 export type Store = ReturnType<typeof useStore>;

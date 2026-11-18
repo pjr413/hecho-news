@@ -1,5 +1,5 @@
 import { Image } from "expo-image";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -26,6 +26,7 @@ import {
   type Design,
   type DeviceAlbum,
   type Photo,
+  type View as MediaView,
 } from "./types";
 
 export function RenameSheet({
@@ -479,6 +480,110 @@ export function AlbumView({
   );
 }
 
+const VIEWS: { id: MediaView; label: string; blurb: string }[] = [
+  { id: "all", label: "Everything", blurb: "Photos and videos, newest first." },
+  { id: "photos", label: "Photos", blurb: "Only photos." },
+  { id: "videos", label: "Videos", blurb: "Only videos: usually the biggest files." },
+  { id: "screenshots", label: "Screenshots", blurb: "Only screenshots, which tend to pile up." },
+  {
+    id: "bursts",
+    label: "Bursts",
+    blurb: "Photos taken seconds apart at the same size: the near-duplicates.",
+  },
+];
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+/** Pick a year and month to start sorting from. */
+export function JumpSheet({
+  visible,
+  onPick,
+  onClose,
+}: {
+  visible: boolean;
+  onPick: (before: number, label: string) => void;
+  onClose: () => void;
+}) {
+  const [range, setRange] = useState<{ oldest: number; newest: number } | null | undefined>(undefined);
+  const [year, setYear] = useState<number | null>(null);
+  useEffect(() => {
+    if (!visible) return;
+    setRange(undefined);
+    library
+      .dateRange()
+      .then((r) => {
+        setRange(r);
+        if (r) setYear(new Date(r.newest).getFullYear());
+      })
+      .catch(() => setRange(null));
+  }, [visible]);
+
+  const hi = range ? new Date(range.newest) : null;
+  const lo = range ? new Date(range.oldest) : null;
+  const years =
+    hi && lo ? Array.from({ length: hi.getFullYear() - lo.getFullYear() + 1 }, (_, i) => hi.getFullYear() - i) : [];
+  const unavailable = (m: number) =>
+    !!hi && !!lo && year !== null &&
+    ((year === hi.getFullYear() && m > hi.getMonth()) || (year === lo.getFullYear() && m < lo.getMonth()));
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={[styles.backdrop, styles.bottom]}>
+        <View style={[styles.sheet, styles.tall]}>
+          <Text style={styles.title}>Jump to a month</Text>
+          {range === undefined && <ActivityIndicator color="#fff" />}
+          {range === null && <Text style={styles.body}>There are no photos to jump to.</Text>}
+          {range && (
+            <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollBody}>
+              <Text style={styles.section}>Year</Text>
+              <View style={styles.chips}>
+                {years.map((y) => (
+                  <Pressable
+                    key={y}
+                    style={[styles.chip, year === y && styles.chipOn]}
+                    onPress={() => setYear(y)}
+                    accessibilityRole="button"
+                    testID={`year-${y}`}
+                  >
+                    <Text style={[styles.chipText, year === y && styles.chipTextOn]}>{y}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Text style={styles.section}>Month</Text>
+              <View style={styles.chips}>
+                {MONTHS.map((m, i) => (
+                  <Pressable
+                    key={m}
+                    disabled={unavailable(i)}
+                    style={[styles.chip, unavailable(i) && styles.dim]}
+                    onPress={() =>
+                      year !== null &&
+                      onPick(new Date(year, i + 1, 1).getTime() - 1, `${MONTH_NAMES[i]} ${year}`)
+                    }
+                    accessibilityRole="button"
+                    testID={`month-${i}`}
+                  >
+                    <Text style={styles.chipText}>{m}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </ScrollView>
+          )}
+          <View style={styles.buttons}>
+            <Pressable style={styles.button} onPress={onClose}>
+              <Text style={styles.buttonText}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 /** A tiny picture of where the album rows sit, so the versions can be told apart at a glance. */
 function Thumb({ design }: { design: Design }) {
   const bar = <View style={styles.thumbBar} />;
@@ -511,6 +616,16 @@ export function OptionsSheet({
   onRows,
   onOpenTimer,
   onOpenGame,
+  onSecret,
+  gamesUnlocked,
+  onUnlockGames,
+  onOpenGames,
+  view,
+  onView,
+  jumpLabel,
+  onOpenJump,
+  onClearJump,
+  onShowTour,
   onClose,
 }: {
   visible: boolean;
@@ -527,8 +642,43 @@ export function OptionsSheet({
   onRows: (rows: number) => void;
   onOpenTimer: () => void;
   onOpenGame: () => void;
+  /** The version line was tapped seven times. */
+  onSecret: () => void;
+  /** The hidden games table: unlocked by tapping the knight five times. */
+  gamesUnlocked: boolean;
+  onUnlockGames: () => void;
+  onOpenGames: () => void;
+  /** What the timeline is showing, and the date it was jumped to (if any). */
+  view: MediaView;
+  onView: (view: MediaView) => void;
+  jumpLabel: string | null;
+  onOpenJump: () => void;
+  onClearJump: () => void;
+  onShowTour: () => void;
   onClose: () => void;
 }) {
+  const versionTaps = useRef({ n: 0, at: 0 });
+  const tapVersion = () => {
+    const now = Date.now();
+    const t = versionTaps.current;
+    t.n = now - t.at > 2000 ? 1 : t.n + 1;
+    t.at = now;
+    if (t.n >= 7) {
+      t.n = 0;
+      onSecret();
+    }
+  };
+  const knightTaps = useRef({ n: 0, at: 0 });
+  const tapKnight = () => {
+    const now = Date.now();
+    const t = knightTaps.current;
+    t.n = now - t.at > 3000 ? 1 : t.n + 1;
+    t.at = now;
+    if (t.n >= 5) {
+      t.n = 0;
+      onUnlockGames();
+    }
+  };
   const [filling, setFilling] = useState(false);
   const [result, setResult] = useState("");
   useEffect(() => {
@@ -567,6 +717,43 @@ export function OptionsSheet({
                 <Text style={styles.tick}>{d.id === design ? "✓" : ""}</Text>
               </Pressable>
             ))}
+            <Text style={styles.section}>Find photos</Text>
+            <View style={styles.chips}>
+              {VIEWS.map((v) => (
+                <Pressable
+                  key={v.id}
+                  style={[styles.chip, view === v.id && styles.chipOn]}
+                  onPress={() => onView(v.id)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: view === v.id }}
+                  testID={`view-${v.id}`}
+                >
+                  <Text style={[styles.chipText, view === v.id && styles.chipTextOn]}>{v.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <Text style={styles.body} testID="view-blurb">
+              {VIEWS.find((v) => v.id === view)?.blurb}
+            </Text>
+            <Pressable style={styles.choice} onPress={onOpenJump} accessibilityRole="button" testID="open-jump">
+              <View style={styles.choiceText}>
+                <Text style={styles.lineText}>{jumpLabel ? `Jumped to ${jumpLabel}` : "Jump to a month"}</Text>
+                <Text style={styles.body}>Start sorting from any month and year.</Text>
+              </View>
+            </Pressable>
+            {jumpLabel && (
+              <Pressable style={styles.choice} onPress={onClearJump} accessibilityRole="button" testID="clear-jump">
+                <View style={styles.choiceText}>
+                  <Text style={styles.lineText}>Back to the newest photos</Text>
+                </View>
+              </Pressable>
+            )}
+            <Pressable style={styles.choice} onPress={onShowTour} accessibilityRole="button" testID="show-tour">
+              <View style={styles.choiceText}>
+                <Text style={styles.lineText}>Show the tour</Text>
+                <Text style={styles.body}>A quick reminder of the gestures.</Text>
+              </View>
+            </Pressable>
             <Text style={styles.section}>Rows of albums</Text>
             <View style={styles.chips}>
               {Array.from({ length: MAX_ROWS }, (_, i) => i + 1).map((n) => {
@@ -658,7 +845,9 @@ export function OptionsSheet({
             accessibilityRole="button"
             testID="open-timer"
           >
-            <Text style={styles.plusBig}>♞</Text>
+            <Pressable onPress={tapKnight} hitSlop={6} testID="knight">
+              <Text style={styles.plusBig}>♞</Text>
+            </Pressable>
             <View style={styles.choiceText}>
               <Text style={styles.lineText}>Chess timer</Text>
               <Text style={styles.body}>A two-player clock for a game on the table</Text>
@@ -678,7 +867,25 @@ export function OptionsSheet({
               </Text>
             </View>
           </Pressable>
-          <Text style={styles.body}>{info}</Text>
+          {gamesUnlocked && (
+            <Pressable
+              style={styles.choice}
+              onPress={onOpenGames}
+              accessibilityRole="button"
+              testID="open-games"
+            >
+              <Text style={styles.plusBig}>🎲</Text>
+              <View style={styles.choiceText}>
+                <Text style={styles.lineText}>Games table</Text>
+                <Text style={styles.body}>
+                  Tic-tac-toe, Connect Four and checkers for two
+                </Text>
+              </View>
+            </Pressable>
+          )}
+          <Pressable onPress={tapVersion} accessibilityRole="text" testID="version-line">
+            <Text style={styles.body}>{info}</Text>
+          </Pressable>
           </ScrollView>
           <View style={styles.buttons}>
             <Pressable

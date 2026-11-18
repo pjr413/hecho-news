@@ -39,7 +39,10 @@ A small phone app for clearing out a photo library one picture at a time.
   **Piece direction** lets you choose between each side's pieces facing their own player, all
   pieces upright for the bottom player, or all upright for the top player. **Move hints** (the dots showing where a picked piece can go) can be switched off.
   **Reset** offers two choices: reset just the time (the pieces stay where they are) or reset
-  the whole game
+  the whole game. Also: **Resign** and **Offer a draw** (the other side accepts or declines),
+  **Takeback**, a scrolling **move list**, **swap sides**, and a game in progress is **saved**
+  and offered back next time. **Piece sets** – eleven looks for the pieces (Classic, Outline,
+  Letters, Animals, Sea, Space, Medieval, Pirates, Spooky, Sweets, Sports)
 - **Double-tap** – favorite (the phone's real Favorites)
 - **Undo** steps back the latest choice, whether it was a trash or an album drop
 
@@ -53,7 +56,34 @@ The trash bin is the one safety net for deleting photos:
   any app that deletes photos. "Delete all now" empties the bin early. On iPhone,
   deleted photos then sit in Recently Deleted for another 30 days.
 
-Photos only for now; videos are left alone.
+**Finding the clutter faster** (Options)
+
+- **Show** only Photos, Videos, Screenshots or Bursts (shots taken seconds apart at the same
+  size). A chip at the top says what's filtered; tap it to go back to everything
+- **Jump to a date** – pick a year and month and the timeline continues from there
+- Each photo shows the date it was taken; videos show a play badge and their length, and
+  **tap the play button** to watch one
+- **First-run tour** – four short cards the first time the app opens; **Show the tour** in
+  Options plays it again
+- **App icon** – two photos with a flick-up arrow (`assets/`)
+
+**Hidden extras** (for fun; none of them touch the photos)
+
+- Tap the version line in Options 7 times: confetti and a stats page
+- 100 photos sorted in a row: "Does it spark joy?"
+- Double-tap a photo 5 times: it rains hearts
+- Hold **Bin**: a cartoon trash can shows how full it is
+- Shake the phone: a random old photo, as a "Throwback" (Shift+S in the browser preview)
+- Album tiles pick up an emoji from their name (Pizza, Cats, Beach...)
+- Between midnight and 4am: "Go to sleep" and a dimmed screen
+- Reaching the last photo: fireworks and "Inbox zero"
+- Hold the gear for 5 seconds: a memory-match game made from her own photos
+- On the chess board, swipe up, up, down, down, left, right, left, right: disco mode
+- Tap the ♞ in Options 5 times: a **Games table** for two (tic-tac-toe, Connect Four,
+  checkers), seated like the chess game
+
+Videos are only ever viewed here, never edited. Playing them, the shake, and keeping the screen
+on need the real app build; the app icon only changes with a new build, not over the air.
 
 ## Running it
 
@@ -112,4 +142,6 @@ instead; an old build ignores updates made for a newer `version`.
 | `src/PhotoCard.tsx` | A photo card and its gestures (drag, flick, swipe) |
 | `src/Sheets.tsx` | Rename and save-review sheets |
 | `src/library.ts` | Photo library calls (`library.web.ts` is the sample-photo stand-in) |
+| `src/Games.tsx` | The memory game and the two-player games table |
+| `src/fun.tsx`, `src/Tour.tsx`, `src/VideoPlayer.tsx`, `src/pieceSets.ts` | Confetti, stats, bin peek; the tour; the video player; chess piece sets |
 | `src/store.ts` | Album names and unsaved choices, kept between launches |

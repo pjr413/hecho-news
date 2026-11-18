@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import {
   GestureDetector,
   usePanGesture,
@@ -58,9 +58,21 @@ type Props = {
   hoverSlot: SharedValue<number>;
   onDecide: (action: Action) => void;
   onFavorite: () => void;
+  /** Videos get a play button when this install can play them. */
+  canPlay: boolean;
+  onPlay: () => void;
 };
 
 const FLICK_SPEED = 800;
+
+function formatDuration(seconds?: number): string {
+  const t = Math.round(seconds ?? 0);
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+}
+
+function formatDate(ms: number): string {
+  return new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
 /** Pinching a photo down to this fraction of its size (or less) sends it to the bin. */
 const PINCH_TRASH = 0.7;
 const OUT = { duration: 210 };
@@ -68,7 +80,7 @@ const OUT = { duration: 210 };
 const OFFSCREEN = 1200;
 
 export const PhotoCard = forwardRef<PhotoCardHandle, Props>(function PhotoCard(
-  { photo, role, favorite, canBack, canForward, geometry, hoverSlot, onDecide, onFavorite },
+  { photo, role, favorite, canBack, canForward, geometry, hoverSlot, onDecide, onFavorite, canPlay, onPlay },
   ref,
 ) {
   const active = role === 'current';
@@ -291,6 +303,29 @@ export const PhotoCard = forwardRef<PhotoCardHandle, Props>(function PhotoCard(
           transition={120}
           pointerEvents="none"
         />
+        {photo.video && (
+          <View style={styles.videoBadge} pointerEvents="none">
+            <Text style={styles.badgeLabel}>▶ {formatDuration(photo.duration)}</Text>
+          </View>
+        )}
+        {photo.video && canPlay && role === 'current' && (
+          <Pressable
+            style={styles.playButton}
+            onPress={onPlay}
+            accessibilityRole="button"
+            accessibilityLabel="Play video"
+            testID="play-video"
+          >
+            <Text style={styles.playGlyph}>▶</Text>
+          </Pressable>
+        )}
+        {photo.time !== undefined && (
+          <View style={styles.dateBadge} pointerEvents="none">
+            <Text style={styles.badgeLabel} testID="photo-date">
+              {formatDate(photo.time)}
+            </Text>
+          </View>
+        )}
         {favorite && (
           <View style={styles.badge} testID="favorite-badge">
             <Text style={styles.badgeText}>♥</Text>
@@ -327,6 +362,41 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.45)',
   },
   badgeText: { color: '#FF5A7A', fontSize: 18 },
+  videoBadge: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+    paddingHorizontal: 10,
+    height: 28,
+    borderRadius: 14,
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  dateBadge: {
+    position: 'absolute',
+    bottom: 12,
+    right: 12,
+    paddingHorizontal: 10,
+    height: 26,
+    borderRadius: 13,
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  badgeLabel: { color: '#F2F3F5', fontSize: 13, fontWeight: '700' },
+  playButton: {
+    position: 'absolute',
+    alignSelf: 'center',
+    top: '42%',
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.85)',
+  },
+  playGlyph: { color: '#fff', fontSize: 30, marginLeft: 4 },
   heartWrap: {
     position: 'absolute',
     top: 0,

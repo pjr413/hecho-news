@@ -1,16 +1,21 @@
 // Browser preview: there is no photo library on the web, so this serves
 // generated sample pictures and keeps every change in memory.
-import type { Access, AlbumRef, DeviceAlbum, Photo } from './types';
+import { findBursts, type Access, type AlbumRef, type DeviceAlbum, type Filter, type Photo } from './types';
 
 export const isDemo = true;
 
 const HUES = [12, 38, 160, 200, 262, 320, 95, 345];
 
-function sample(i: number): Photo {
+const DAY = 24 * 60 * 60 * 1000;
+const NOW = Date.now();
+
+/** Sample photos: every 7th is a video, every 5th a screenshot, and some come in quick pairs. */
+function sample(i: number, time?: number): Photo {
   const h = HUES[i % HUES.length];
   const portrait = i % 3 !== 0;
   const w = portrait ? 600 : 900;
   const ht = portrait ? 800 : 600;
+  const video = i % 7 === 6;
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${ht}" viewBox="0 0 ${w} ${ht}">` +
     `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">` +
@@ -20,10 +25,38 @@ function sample(i: number): Photo {
     `<path d="M0 ${ht * 0.78} L${w * 0.3} ${ht * 0.5} L${w * 0.55} ${ht * 0.72} L${w * 0.75} ${ht * 0.56} L${w} ${ht * 0.8} V${ht} H0Z" fill="rgba(0,0,0,.28)"/>` +
     `<text x="50%" y="${ht * 0.93}" text-anchor="middle" font-family="sans-serif" font-size="${w * 0.06}" fill="rgba(255,255,255,.9)">Sample photo ${i + 1}</text>` +
     `</svg>`;
-  return { id: `demo-${i}`, uri: `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`, favorite: false };
+  return {
+    id: `demo-${i}`,
+    uri: `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`,
+    favorite: false,
+    video,
+    duration: video ? 14 + i : undefined,
+    time: time ?? NOW - i * 5 * DAY,
+    w,
+    h: ht,
+  };
 }
 
-let photos: Photo[] = Array.from({ length: 24 }, (_, i) => sample(i));
+/** Screenshots in the demo: every 5th photo that isn't a video. */
+const isScreenshot = (p: Photo) => !p.video && Number(p.id.slice(5)) % 5 === 0;
+
+// Photos 11, 21, 31... are taken 1.5 s after the one before and are the same size: bursts.
+const make = (i: number): Photo => {
+  if (i % 10 === 1 && i > 1) {
+    const before = sample(i - 1);
+    return { ...sample(i), w: before.w, h: before.h, time: before.time! - 1500 };
+  }
+  return sample(i);
+};
+
+let photos: Photo[] = Array.from({ length: 130 }, (_, i) => make(i));
+
+const matches = (p: Photo, filter: Filter, before?: number) =>
+  (before === undefined || (p.time ?? 0) <= before) &&
+  (filter === 'all' ||
+    (filter === 'photos' && !p.video) ||
+    (filter === 'videos' && !!p.video) ||
+    (filter === 'screenshots' && isScreenshot(p)));
 
 export async function checkAccess(): Promise<{ access: Access; canAsk: boolean }> {
   return { access: 'none', canAsk: true };
@@ -35,8 +68,27 @@ export async function requestAccess(): Promise<{ access: Access; canAsk: boolean
 
 export async function chooseMorePhotos(): Promise<void> {}
 
-export async function fetchPage(offset: number, limit: number): Promise<Photo[]> {
-  return photos.slice(offset, offset + limit);
+export async function fetchPage(
+  offset: number,
+  limit: number,
+  opts: { filter?: Filter; before?: number } = {},
+): Promise<Photo[]> {
+  return photos
+    .filter((p) => matches(p, opts.filter ?? 'all', opts.before))
+    .slice(offset, offset + limit);
+}
+
+export async function dateRange(): Promise<{ oldest: number; newest: number } | null> {
+  const times = photos.map((p) => p.time ?? 0);
+  return times.length ? { oldest: Math.min(...times), newest: Math.max(...times) } : null;
+}
+
+export async function burstPhotos(opts: { before?: number } = {}): Promise<Photo[]> {
+  return findBursts(photos.filter((p) => matches(p, 'photos', opts.before)));
+}
+
+export async function videoUri(_id: string): Promise<string> {
+  return '';
 }
 
 export async function setFavorite(_id: string, _value: boolean): Promise<void> {}
